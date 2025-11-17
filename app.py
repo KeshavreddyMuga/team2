@@ -31,12 +31,19 @@ app.config['MAIL_DEFAULT_SENDER'] = (
 mail = Mail(app)
 db = SQLAlchemy(app)
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+# Proper SocketIO Setup for Render (eventlet)
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode="eventlet",
+    allow_upgrades=True,
+    engineio_logger=False
+)
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 # ----------------------------------------------------
-# STYLE + SweetAlert + SocketIO client
+# STYLE + JS
 # ----------------------------------------------------
 STYLE = """
 <link href='https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@5/dark.css' rel='stylesheet'>
@@ -116,7 +123,7 @@ class Upload(db.Model):
     uploaded_time = db.Column(db.DateTime, default=datetime.utcnow)
 
 # ----------------------------------------------------
-# CREATE DB ON RENDER (IMPORTANT FIX)
+# DB Init
 # ----------------------------------------------------
 with app.app_context():
     db.create_all()
@@ -311,4 +318,9 @@ def project_completed(pid):
 # RUN
 # ----------------------------------------------------
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000)),
+        debug=False
+    )
