@@ -1,8 +1,8 @@
 flask
 flask_sqlalchemy
 flask_mail
-flask_socketio
-eventlet
+flask_socketio==5.3.6
+eventlet==0.33.1
 gunicorn
 python-dotenv
-Werkzeug
+werkzeug
