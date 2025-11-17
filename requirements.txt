@@ -1,0 +1,8 @@
+flask
+flask_sqlalchemy
+flask_mail
+flask_socketio
+eventlet
+gunicorn
+python-dotenv
+Werkzeug
