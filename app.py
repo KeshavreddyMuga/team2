@@ -1,10 +1,10 @@
 import os
 import traceback
-import smtplib
+import requests
 from email.message import EmailMessage
 from datetime import datetime
 from uuid import uuid4
-from flask import Flask, request, redirect, session, url_for, send_from_directory
+from flask import Flask, request, redirect, session, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO
 from werkzeug.utils import secure_filename
@@ -20,19 +20,16 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "uploads")
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
-# Gmail SMTP (FINAL)
-SMTP_HOST = os.environ.get("SMTP_HOST")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", 587))
-SMTP_USER = os.environ.get("SMTP_USER")
-SMTP_PASS = os.environ.get("SMTP_PASS")
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL")  # USE THIS INSTEAD OF EMAIL_FROM
+# Resend API
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL")  # Example: onboarding@resend.dev
 
 db = SQLAlchemy(app)
 
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
-    async_mode="threading",  # Render-safe
+    async_mode="threading",
     engineio_logger=False,
 )
 
@@ -101,24 +98,30 @@ with app.app_context():
     db.create_all()
 
 # ----------------------------------------------------
-# EMAIL (GMAIL SMTP)
+# EMAIL (RESEND API)
 # ----------------------------------------------------
 def send_email(to, subject, body):
     try:
-        msg = EmailMessage()
-        msg["From"] = SENDER_EMAIL
-        msg["To"] = to
-        msg["Subject"] = subject
-        msg.set_content(body)
+        url = "https://api.resend.com/emails"
 
-        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15)
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
-        server.quit()
-        return True
+        data = {
+            "from": SENDER_EMAIL,
+            "to": to,
+            "subject": subject,
+            "text": body
+        }
 
-    except Exception:
+        headers = {
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        r = requests.post(url, json=data, headers=headers)
+        print("RESEND STATUS:", r.status_code, r.text)
+        return r.status_code in [200, 201]
+
+    except Exception as e:
+        print("RESEND ERROR:", e)
         traceback.print_exc()
         return False
 
@@ -271,7 +274,10 @@ def project_page(pid):
 
         return redirect(f"/project/{pid}")
 
-    uploads = Upload.query.filter_by(project_id=pid, week_number=project.current_week).order_by(Upload.uploaded_time.desc()).all()
+    uploads = Upload.query.filter_by(
+        project_id=pid,
+        week_number=project.current_week
+    ).order_by(Upload.uploaded_time.desc()).all()
 
     items = "".join(
         f"<div class='upload-item'><b>{u.file_name}</b> — <a href='/download/{u.file_name}'>Download</a>"
@@ -300,36 +306,11 @@ def project_completed(pid):
         <a href='/dashboard'><button class='small'>Back</button></a>
     </div>
 """
+
 @app.route("/test_email")
 def test_email():
-    try:
-        print("SMTP TEST: Connecting...")
-
-        msg = EmailMessage()
-        msg["From"] = SENDER_EMAIL
-        msg["To"] = SMTP_USER
-        msg["Subject"] = "SMTP Test Email"
-        msg.set_content("This is a test email from Render Gmail SMTP.")
-
-        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=25)
-        server.set_debuglevel(1)  # show full Gmail logs
-        server.starttls()
-
-        print("SMTP TEST: Logging in...")
-        server.login(SMTP_USER, SMTP_PASS)
-
-        print("SMTP TEST: Sending...")
-        server.send_message(msg)
-        server.quit()
-
-        return "Email sent successfully! Check your inbox."
-
-    except Exception as e:
-        print("SMTP TEST ERROR:", e)
-        traceback.print_exc()
-        return f"SMTP FAILED — check Render logs"
-
-# ----------------------------------------------------
+    ok = send_email("keshavareddymuga@gmail.com", "Test Email", "Render + Resend working!")
+    return "Sent!" if ok else "Failed"
 
 # ----------------------------------------------------
 if __name__ == "__main__":
