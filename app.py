@@ -300,9 +300,37 @@ def project_completed(pid):
         <a href='/dashboard'><button class='small'>Back</button></a>
     </div>
 """
+@app.route("/test_email")
+def test_email():
+    try:
+        print("SMTP TEST: Connecting...")
+
+        msg = EmailMessage()
+        msg["From"] = SENDER_EMAIL
+        msg["To"] = SMTP_USER
+        msg["Subject"] = "SMTP Test Email"
+        msg.set_content("This is a test email from Render Gmail SMTP.")
+
+        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=25)
+        server.set_debuglevel(1)  # show full Gmail logs
+        server.starttls()
+
+        print("SMTP TEST: Logging in...")
+        server.login(SMTP_USER, SMTP_PASS)
+
+        print("SMTP TEST: Sending...")
+        server.send_message(msg)
+        server.quit()
+
+        return "Email sent successfully! Check your inbox."
+
+    except Exception as e:
+        print("SMTP TEST ERROR:", e)
+        traceback.print_exc()
+        return f"SMTP FAILED — check Render logs"
 
 # ----------------------------------------------------
-# RUN
+
 # ----------------------------------------------------
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
