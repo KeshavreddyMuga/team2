@@ -1,3 +1,4 @@
+# app.py
 import os
 import traceback
 import requests
@@ -6,6 +7,7 @@ from flask import Flask, request, redirect, session, url_for, send_from_director
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO
 from werkzeug.utils import secure_filename
+from uuid import uuid4
 
 # ----------------------------------------------------
 # CONFIG
@@ -16,6 +18,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "team_secret_key")
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///team_workspace.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER', 'uploads')
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB limit (adjust as needed)
 
 # Resend API details
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
@@ -133,12 +136,21 @@ with app.app_context():
 # SEND EMAIL (RESEND API)
 # ----------------------------------------------------
 def send_email_to_all(subject, body):
+    """
+    Sends an email to all registered users using Resend (if configured).
+    Returns True on success (or when there's nothing to send), False on fatal error.
+    """
     try:
+        if not RESEND_API_KEY:
+            # Resend not configured — skip sending but return True (not fatal)
+            app.logger.info("RESEND_API_KEY not set; skipping email send.")
+            return True
+
         users = User.query.all()
         emails = [u.email for u in users if u.email]
 
         if not emails:
-            return False
+            return True
 
         url = "https://api.resend.com/emails"
         headers = {
@@ -146,6 +158,7 @@ def send_email_to_all(subject, body):
             "Content-Type": "application/json",
         }
 
+        # Send individually to avoid exposing other recipients
         for email in emails:
             data = {
                 "from": EMAIL_FROM,
@@ -153,7 +166,12 @@ def send_email_to_all(subject, body):
                 "subject": subject,
                 "text": body
             }
-            requests.post(url, json=data, headers=headers)
+            try:
+                resp = requests.post(url, json=data, headers=headers, timeout=10)
+                if resp.status_code >= 400:
+                    app.logger.warning("Failed to send email to %s: %s", email, resp.text)
+            except Exception:
+                app.logger.exception("Exception when sending email to %s", email)
 
         return True
 
@@ -177,24 +195,27 @@ def home():
 @app.route("/register", methods=["GET","POST"])
 def register():
     if request.method == "POST":
-        name = request.form["name"].strip()
-        email = request.form["email"].strip().lower()
-        pwd = request.form["password"]
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        pwd = request.form.get("password", "")
+
+        if not email or not pwd:
+            return STYLE + logout_button_html() + "<script>alert('Email and password required');window.location='/register';</script>"
 
         if User.query.filter_by(email=email).first():
             return STYLE + logout_button_html() + "<script>alert('Email already registered');window.location='/register';</script>"
 
         db.session.add(User(name=name, email=email, password=pwd))
         db.session.commit()
-        return redirect("/login")
+        return redirect(url_for('login'))
 
     return STYLE + logout_button_html() + """
     <div class='container'>
         <h2>Register</h2>
         <form method='POST'>
-            <label>Name</label><input name='name'>
-            <label>Email</label><input name='email'>
-            <label>Password</label><input type='password' name='password'>
+            <label>Name</label><input name='name' required>
+            <label>Email</label><input name='email' required>
+            <label>Password</label><input type='password' name='password' required>
             <button>Register</button>
         </form>
     </div>
@@ -203,8 +224,8 @@ def register():
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":
-        email = request.form["email"].strip().lower()
-        pwd = request.form["password"]
+        email = request.form.get("email", "").strip().lower()
+        pwd = request.form.get("password", "")
 
         user = User.query.filter_by(email=email).first()
         if not user or user.password != pwd:
@@ -212,14 +233,14 @@ def login():
 
         session["user_id"] = user.id
         session["user_name"] = user.name
-        return redirect("/dashboard")
+        return redirect(url_for('dashboard'))
 
     return STYLE + logout_button_html() + """
     <div class='container'>
         <h2>Login</h2>
         <form method='POST'>
-            <label>Email</label><input name='email'>
-            <label>Password</label><input type='password' name='password'>
+            <label>Email</label><input name='email' required>
+            <label>Password</label><input type='password' name='password' required>
             <button>Login</button>
         </form>
     </div>
@@ -228,22 +249,22 @@ def login():
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect("/")
+    return redirect(url_for('home'))
 
 @app.route("/dashboard")
 def dashboard():
     if "user_id" not in session:
-        return redirect("/login")
+        return redirect(url_for('login'))
 
     projects = Project.query.all()
-    html = "".join(f"<li><a href='/project/{p.id}'>{p.name}</a></li>" for p in projects)
+    html = "".join(f"<li><a href='{url_for('project_page', pid=p.id)}'>{p.name}</a></li>" for p in projects)
 
     return STYLE + logout_button_html() + f"""
     <div class='container'>
-        <h2>Welcome {session['user_name']}</h2>
-        <form method='POST' action='/create_project'>
-            <label>Project Name</label><input name='name'>
-            <label>Weeks</label><input type='number' name='weeks' min='1'>
+        <h2>Welcome {session.get('user_name')}</h2>
+        <form method='POST' action='{url_for('create_project')}'>
+            <label>Project Name</label><input name='name' required>
+            <label>Weeks</label><input type='number' name='weeks' min='1' required>
             <button>Create Project</button>
         </form>
         <ul>{html}</ul>
@@ -253,10 +274,14 @@ def dashboard():
 @app.route("/create_project", methods=["POST"])
 def create_project():
     if "user_id" not in session:
-        return redirect("/login")
+        return redirect(url_for('login'))
 
-    name = request.form["name"].strip()
-    weeks = int(request.form["weeks"])
+    name = request.form.get("name", "").strip()
+    weeks_raw = request.form.get("weeks", "1")
+    try:
+        weeks = max(1, int(weeks_raw))
+    except Exception:
+        weeks = 1
 
     p = Project(name=name, weeks=weeks)
     db.session.add(p)
@@ -266,47 +291,86 @@ def create_project():
         db.session.add(ProjectWeek(project_id=p.id, week_number=w))
     db.session.commit()
 
-    return redirect("/dashboard")
+    return redirect(url_for('dashboard'))
 
 @app.route("/download/<path:filename>")
 def download(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename, as_attachment=True)
+    # Security: ensure filename does not contain path traversal after secure_filename
+    safe_name = secure_filename(filename)
+    return send_from_directory(app.config["UPLOAD_FOLDER"], safe_name, as_attachment=True)
 
 @app.route("/project/<int:pid>", methods=["GET","POST"])
 def project_page(pid):
+    """
+    Handles GET (show page) and POST (upload a file).
+    Important: after POST we redirect to the GET view of this same route (safe redirect).
+    """
     if "user_id" not in session:
-        return redirect("/login")
+        return redirect(url_for('login'))
 
     p = Project.query.get(pid)
+    if not p:
+        return STYLE + logout_button_html() + "<div class='container'><h2>Project not found</h2><a href='/dashboard'><button>Back</button></a></div>"
 
     if request.method == "POST":
-        f = request.files["file"]
+        # Validate file field
+        if 'file' not in request.files:
+            return STYLE + logout_button_html() + "<script>alert('No file part');window.location='{0}';</script>".format(url_for('project_page', pid=pid))
+
+        f = request.files['file']
+        if not f or f.filename == "":
+            return STYLE + logout_button_html() + "<script>alert('No file selected');window.location='{0}';</script>".format(url_for('project_page', pid=pid))
+
         desc = request.form.get("description", "")
 
-        fname = secure_filename(f.filename)
-        f.save(os.path.join(app.config["UPLOAD_FOLDER"], fname))
+        # Secure and make filename unique to avoid accidental overwrites
+        orig = secure_filename(f.filename)
+        unique_prefix = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "_" + uuid4().hex[:8]
+        fname = f"{unique_prefix}_{orig}" if orig else f"{unique_prefix}"
 
-        db.session.add(Upload(
-            project_id=pid,
-            week_number=p.current_week,
-            file_name=fname,
-            uploaded_by=session["user_name"],
-            description=desc
-        ))
-        db.session.commit()
+        try:
+            filepath = os.path.join(app.config["UPLOAD_FOLDER"], fname)
+            f.save(filepath)
+        except Exception:
+            app.logger.exception("Failed to save uploaded file")
+            return STYLE + logout_button_html() + "<script>alert('Failed to save file');window.location='{0}';</script>".format(url_for('project_page', pid=pid))
 
-        send_email_to_all(
-            f"New File Uploaded - {p.name}",
-            f"{session['user_name']} uploaded {fname}"
-        )
+        try:
+            db.session.add(Upload(
+                project_id=pid,
+                week_number=p.current_week,
+                file_name=fname,
+                uploaded_by=session.get("user_name", "unknown"),
+                description=desc
+            ))
+            db.session.commit()
+        except Exception:
+            app.logger.exception("DB error when saving upload record")
+            # Attempt to remove file to keep uploads folder clean
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+            return STYLE + logout_button_html() + "<script>alert('Failed to record upload');window.location='{0}';</script>".format(url_for('project_page', pid=pid))
 
-        return redirect(f"/project/{pid}")
+        # Send notification emails (non-fatal)
+        try:
+            send_email_to_all(
+                f"New File Uploaded - {p.name}",
+                f"{session.get('user_name', 'Someone')} uploaded {orig or fname}"
+            )
+        except Exception:
+            app.logger.exception("Error while sending notification emails")
 
-    uploads = Upload.query.filter_by(project_id=pid, week_number=p.current_week).all()
+        # Safe redirect to GET view (prevents re-submitting the POST when user refreshes)
+        return redirect(url_for('project_page', pid=pid))
+
+    # GET: show uploads for current week
+    uploads = Upload.query.filter_by(project_id=pid, week_number=p.current_week).order_by(Upload.uploaded_time.desc()).all()
 
     items = "".join(
-        f"<div class='upload-item'><b>{u.file_name}</b> — <a href='/download/{u.file_name}'>Download</a>"
-        f"<div class='meta'>Uploaded by {u.uploaded_by}</div></div>"
+        f"<div class='upload-item'><b>{u.file_name}</b> — <a href='{url_for('download', filename=u.file_name)}'>Download</a>"
+        f"<div class='meta'>Uploaded by {u.uploaded_by} at {u.uploaded_time.strftime('%Y-%m-%d %H:%M:%S')}</div></div>"
         for u in uploads
     ) or "<p>No files yet</p>"
 
@@ -316,10 +380,11 @@ def project_page(pid):
         <h2>{p.name} — Week {p.current_week}</h2>
         {items}
         <form method='POST' enctype='multipart/form-data'>
-            <label>Select File</label><input type='file' name='file'>
+            <label>Select File</label><input type='file' name='file' required>
             <label>Description</label><textarea name='description'></textarea>
             <button>Upload</button>
         </form>
+        <a href='{url_for('dashboard')}'><button class='small'>Back to Dashboard</button></a>
     </div>
 """
 
@@ -328,7 +393,7 @@ def project_completed(pid):
     return STYLE + logout_button_html() + f"""
     <div class='container'>
         <h2>Project Completed</h2>
-        <a href='/dashboard'><button>Back</button></a>
+        <a href='{url_for('dashboard')}'><button>Back</button></a>
     </div>
 """
 
