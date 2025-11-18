@@ -2,8 +2,9 @@ flask
 flask_sqlalchemy
 flask_mail
 flask_socketio==5.3.6
-gevent
-gevent-websocket
+gevent==24.2.1
+gevent-websocket==0.10.1
 gunicorn
 python-dotenv
 werkzeug
+
