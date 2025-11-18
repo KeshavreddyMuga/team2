@@ -31,11 +31,13 @@ app.config['MAIL_DEFAULT_SENDER'] = (
 mail = Mail(app)
 db = SQLAlchemy(app)
 
-# Proper SocketIO Setup for Render (eventlet)
+# ----------------------------------------------------
+# SOCKETIO (gevent mode)
+# ----------------------------------------------------
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
-    async_mode="eventlet",
+    async_mode="gevent",
     allow_upgrades=True,
     engineio_logger=False
 )
