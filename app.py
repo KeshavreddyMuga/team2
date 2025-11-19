@@ -10,7 +10,7 @@ from werkzeug.utils import secure_filename
 # ----------------------------------------------------
 # FLASK CONFIG
 # ----------------------------------------------------
-app = Flask(_name_)
+app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "team_secret_key")
 
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///team_workspace.db")
@@ -270,5 +270,5 @@ def test_email():
 # ----------------------------------------------------
 # RUN SERVER
 # ----------------------------------------------------
-if _name_ == "_main_":
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
