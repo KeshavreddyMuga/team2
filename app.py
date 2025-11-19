@@ -83,7 +83,7 @@ with app.app_context():
     db.create_all()
 
 # ----------------------------------------------------
-# RESEND — EMAIL FUNCTIONS
+# RESEND EMAIL
 # ----------------------------------------------------
 def send_email(to, subject, body):
     """Send a single email using Resend API."""
@@ -245,7 +245,7 @@ def project_page(pid):
     project = Project.query.get(pid)
 
     if not project:
-        return STYLE + logout_btn() + f"<div class='container'><h2>Project not found</h2></div>"
+        return STYLE + logout_btn() + "<div class='container'><h2>Project not found</h2></div>"
 
     if request.method == "POST":
         f = request.files["file"]
@@ -268,8 +268,8 @@ def project_page(pid):
         db.session.commit()
 
         send_email_to_all(
-            f"New file uploaded to {project.name}",
-            f"{session['user_name']} uploaded: {original}"
+            f"New file in {project.name}",
+            f"{session['user_name']} uploaded {original}"
         )
 
         return redirect(f"/project/{pid}")
@@ -280,8 +280,7 @@ def project_page(pid):
     ).order_by(Upload.uploaded_time.desc()).all()
 
     items = "".join(
-        f"<div class='upload-item'><b>{u.file_name}</b> — "
-        f"<a href='/download/{u.file_name}'>Download</a>"
+        f"<div class='upload-item'><b>{u.file_name}</b> — <a href='/download/{u.file_name}'>Download</a>"
         f"<div class='meta'>Uploaded by {u.uploaded_by}</div></div>"
         for u in uploads
     ) or "<p>No files uploaded yet</p>"
