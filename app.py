@@ -23,7 +23,7 @@ os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 # RESEND CONFIG
 # ----------------------------------------------------
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL")  # e.g. "Keshava Reddy <onboarding@resend.dev>"
 
 db = SQLAlchemy(app)
 
@@ -38,6 +38,8 @@ button { padding:10px; background:black; color:white; border:none; border-radius
 input, textarea { width:100%; padding:10px; border:1px solid #ccc; margin-top:5px; border-radius:6px; }
 .badge { display:inline-block; padding:6px 10px; background:#ddd; border-radius:6px; margin-right:6px; }
 .success { color:green; font-weight:bold; }
+.msg { padding:10px; border-radius:8px; background:#f3f3f3; margin-bottom:10px; }
+.small { font-size:0.9em; color:#555; }
 </style>
 """
 
@@ -115,7 +117,7 @@ def notify_all_users(subject, body):
             send_email(u.email, subject, body)
 
 def notify_project_users(project_id, subject, body):
-    # In Option A, project users == all registered users
+    # Option A: notify all registered users
     notify_all_users(subject, body)
 
 # ----------------------------------------------------
@@ -241,7 +243,8 @@ def uploads_all(pid):
 
         for u in uploads:
             ts = u.uploaded_time.strftime('%Y-%m-%d %H:%M:%S') if u.uploaded_time else 'N/A'
-            file_list += f"<div><b>{u.file_name}</b> — uploaded by <i>{u.uploaded_by}</i> at {ts} — <a href='/download/{u.file_name}'>Download</a></div>"
+            desc = u.description if u.description else "No description provided"
+            file_list += f"<div><b>{u.file_name}</b> — uploaded by <i>{u.uploaded_by}</i> at {ts} — {desc} — <a href='/download/{u.file_name}'>Download</a></div>"
 
         file_list += "<hr>"
 
@@ -267,12 +270,25 @@ def project(pid):
     # handle upload
     if request.method == "POST" and 'file' in request.files:
         f = request.files["file"]
-        desc = request.form.get("description", "")
+        desc = request.form.get("description", "").strip()
         fname = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "_" + uuid4().hex[:5] + "_" + secure_filename(f.filename)
         f.save(os.path.join(app.config["UPLOAD_FOLDER"], fname))
         db.session.add(Upload(project_id=pid, week_number=p.current_week, file_name=fname, uploaded_by=session["user_name"], description=desc))
         db.session.commit()
-        notify_project_users(pid, f"New upload in {p.name}", f"{session['user_name']} uploaded {f.filename}")
+
+        # Build rich email body including description and download link
+        host = request.host_url.rstrip("/")
+        download_link = f"{host}/download/{fname}"
+        email_body = (
+            f"A new file was uploaded in project: {p.name}\n\n"
+            f"Uploaded by: {session['user_name']}\n"
+            f"Week: {p.current_week}\n"
+            f"File: {f.filename}\n"
+            f"Description: {desc if desc else 'No description provided'}\n\n"
+            f"Download link: {download_link}"
+        )
+
+        notify_project_users(pid, f"New upload in {p.name}", email_body)
         return redirect(f"/project/{pid}")
 
     # list uploads (for current week)
@@ -280,7 +296,8 @@ def project(pid):
     files = ""
     for u in uploads:
         ts = u.uploaded_time.strftime('%Y-%m-%d %H:%M:%S') if u.uploaded_time else 'N/A'
-        files += f"<div>{u.file_name} — uploaded by <i>{u.uploaded_by}</i> at {ts} — <a href='/download/{u.file_name}'>Download</a></div>"
+        desc = u.description if u.description else "No description"
+        files += f"<div>{u.file_name} — uploaded by <i>{u.uploaded_by}</i> at {ts} — {desc} — <a href='/download/{u.file_name}'>Download</a></div>"
 
     # status for current user
     uid = session["user_id"]
