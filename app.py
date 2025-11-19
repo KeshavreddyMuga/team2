@@ -22,7 +22,7 @@ os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 # RESEND CONFIG
 # ----------------------------------------------------
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL")  # Example: Keshava Reddy <onboarding@resend.dev>
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 
 db = SQLAlchemy(app)
 
@@ -32,9 +32,12 @@ db = SQLAlchemy(app)
 STYLE = """
 <style>
 body { font-family: Arial; background:#eef; padding:20px; }
-.container { background:white; padding:20px; border-radius:12px; box-shadow:0 0 10px rgba(0,0,0,0.1); max-width:900px; margin:auto; }
-button { padding:10px; background:black; color:white; border:none; border-radius:6px; cursor:pointer; margin-top:10px; }
-input, textarea { width:100%; padding:10px; border:1px solid #ccc; margin-top:5px; border-radius:6px; }
+.container { background:white; padding:20px; border-radius:12px;
+             box-shadow:0 0 10px rgba(0,0,0,0.1); max-width:900px; margin:auto; }
+button { padding:10px; background:black; color:white; border:none;
+         border-radius:6px; cursor:pointer; margin-top:10px; }
+input, textarea { width:100%; padding:10px; border:1px solid #ccc;
+                  margin-top:5px; border-radius:6px; }
 </style>
 """
 
@@ -72,6 +75,7 @@ with app.app_context():
 # RESEND EMAIL FUNCTION
 # ----------------------------------------------------
 def send_email(to, subject, body):
+    """Send Email via Resend API."""
     try:
         url = "https://api.resend.com/emails"
         payload = {
@@ -84,6 +88,7 @@ def send_email(to, subject, body):
             "Authorization": f"Bearer {RESEND_API_KEY}",
             "Content-Type": "application/json",
         }
+
         r = requests.post(url, json=payload, headers=headers, timeout=10)
         print("RESEND =", r.status_code, r.text)
         return r.status_code in (200, 201)
@@ -263,7 +268,7 @@ def test_email():
     return "OK" if ok else "FAILED"
 
 # ----------------------------------------------------
-# RUN SERVER (NO SOCKETIO)
+# RUN SERVER
 # ----------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
