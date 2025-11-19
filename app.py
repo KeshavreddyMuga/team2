@@ -1,17 +1,16 @@
-# final app.py
+# app.py
 import os
 import traceback
 import requests
 from datetime import datetime
 from uuid import uuid4
-from flask import Flask, request, redirect, session, send_from_directory, url_for, abort
-
+from flask import Flask, request, redirect, session, send_from_directory, url_for
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.utils import secure_filename
 
-# ----------------------------------------------------
+# ---------------------------
 # FLASK CONFIG
-# ----------------------------------------------------
+# ---------------------------
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "team_secret_key")
 
@@ -20,39 +19,35 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "uploads")
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
-# ----------------------------------------------------
+# ---------------------------
 # RESEND CONFIG
-# ----------------------------------------------------
+# ---------------------------
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 SENDER_EMAIL = os.environ.get("EMAIL_FROM", "Team Workspace <onboarding@resend.dev>")
 
 db = SQLAlchemy(app)
 
-# ----------------------------------------------------
-# STYLE (Gradient A + glass + black buttons)
-# ----------------------------------------------------
+# ---------------------------
+# STYLES (Gradient A + glass + black buttons)
+# ---------------------------
 STYLE = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+:root { --glass-bg: rgba(255,255,255,0.18); --glass-strong: rgba(255,255,255,0.28); }
 body{
   font-family: Inter, Arial, sans-serif;
   margin:0;
-  padding:40px;
+  padding:40px 40px 80px 40px;
   background: linear-gradient(135deg,#9b5de5,#f15bb5,#00bbf9,#00f5d4);
   background-attachment: fixed;
 }
-.container{
-  max-width:1000px;
-  margin: auto;
-  background: rgba(255,255,255,0.18);
-  border-radius:16px;
-  padding:28px;
-  box-shadow: 0 20px 40px rgba(0,0,0,0.18);
-  backdrop-filter: blur(8px);
+.page-logout {
+  position: fixed;
+  top: 22px;
+  right: 22px;
+  z-index: 9999;
 }
-.header-row{ display:flex; align-items:center; justify-content:space-between; }
-h1{ margin:0 0 12px 0; font-size:26px; color:#0b0b0b; }
-a.logout{
+.logout-btn{
   display:inline-block;
   background:#000;
   color:#fff;
@@ -60,9 +55,21 @@ a.logout{
   border-radius:10px;
   text-decoration:none;
   font-weight:600;
-  margin-left:8px;
+  box-shadow:0 6px 18px rgba(0,0,0,0.2);
 }
-.badges{ margin:12px 0; }
+.container{
+  max-width:1000px;
+  margin: 40px auto;
+  background: var(--glass-bg);
+  border-radius:16px;
+  padding:28px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.18);
+  backdrop-filter: blur(8px);
+  position: relative;
+}
+.header-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+h1{ margin:0 0 12px 0; font-size:26px; color:#0b0b0b; }
+.badges{ margin:12px 0; display:flex; gap:8px; flex-wrap:wrap; }
 .badge{
   display:inline-block;
   background:#fff;
@@ -80,10 +87,20 @@ a.logout{
 }
 .form-row{ margin-top:16px; }
 input[type=file] { background: rgba(255,255,255,0.1); padding:8px; border-radius:8px; }
-textarea{ width:100%; height:90px; padding:12px; border-radius:10px; border:1px solid #ddd; margin-top:10px; resize:vertical; }
+input[type=text], input[type=email], input[type=number], input[type=password], textarea{
+  width:100%;
+  padding:12px;
+  margin-top:6px;
+  border-radius:10px;
+  border:1px solid #bbb;
+  font-size:15px;
+  box-sizing:border-box;
+}
+textarea{ height:90px; resize:vertical; }
 button.black{
   background:#000; color:#fff; border:none; padding:12px 18px; border-radius:12px; cursor:pointer; margin-top:12px;
   font-weight:600;
+  box-shadow:0 6px 18px rgba(0,0,0,0.12);
 }
 .button-small{ padding:8px 12px; border-radius:8px; background:#fff; border:none; font-weight:700; margin-right:8px; cursor:default; }
 .card{
@@ -96,16 +113,23 @@ button.black{
 .meta{ color:#111; font-size:13px; margin-top:6px; }
 .link{ color:#0056ff; text-decoration:underline; }
 .small{ font-size:13px; color:#222; }
-.footer-actions{ margin-top:18px; }
+.footer-actions{ margin-top:18px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
 .week-list { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-.week-card { padding:10px; background: rgba(255,255,255,0.18); border-radius:8px; }
-.center { text-align:center; }
+.week-card { padding:10px; background: rgba(255,255,255,0.18); border-radius:8px; font-weight:600; }
+.center-form { display:flex; flex-direction:column; gap:15px; align-items:center; }
+.center-form input, .center-form button { width: 80%; }
+@media (max-width:900px){
+  .center-form input, .center-form button { width: 100%; }
+  body{ padding:20px; }
+  .container{ margin: 20px auto; padding:18px; }
+  .page-logout{ top: 12px; right: 12px; }
+}
 </style>
 """
 
-# ----------------------------------------------------
-# DATABASE MODELS
-# ----------------------------------------------------
+# ---------------------------
+# MODELS
+# ---------------------------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(150))
@@ -141,9 +165,9 @@ class WeekStatus(db.Model):
 with app.app_context():
     db.create_all()
 
-# ----------------------------------------------------
-# EMAIL: Resend API
-# ----------------------------------------------------
+# ---------------------------
+# EMAIL (Resend)
+# ---------------------------
 def send_email(to, subject, body):
     if not RESEND_API_KEY:
         app.logger.error("Missing RESEND_API_KEY env var")
@@ -165,24 +189,25 @@ def notify_all_users(subject, body):
             send_email(u.email, subject, body)
 
 def notify_project_users(project_id, subject, body):
-    # currently not per-project membership — notify all users
+    # For now notifying all users (you can restrict to project members later)
     notify_all_users(subject, body)
 
-# ----------------------------------------------------
+# ---------------------------
 # HELPERS
-# ----------------------------------------------------
-def logout_html():
-    return "<a class='logout' href='/logout'>Logout</a>" if session.get("user_id") else ""
+# ---------------------------
+def page_logout_html():
+    # This is placed outside the container at top-right of page
+    return f"<div class='page-logout'><a class='logout-btn' href='/logout'>Logout</a></div>"
 
 def build_file_detail_path(upload_id):
     return f"/file/{upload_id}"
 
-# ----------------------------------------------------
-# AUTH ROUTES
-# ----------------------------------------------------
+# ---------------------------
+# ROUTES: AUTH
+# ---------------------------
 @app.route("/")
 def home():
-    return STYLE + logout_html() + """
+    return STYLE + page_logout_html() + """
     <div class="container">
       <div class="header-row"><h1>Team Workspace</h1></div>
       <p class="small">Simple team workspace with week-tracking and file uploads.</p>
@@ -200,22 +225,25 @@ def register():
         email = request.form.get("email","").strip().lower()
         pwd = request.form.get("password","")
         if not email or not pwd:
-            return STYLE + "<div class='container'><script>alert('Email and password required');window.location='/register';</script></div>"
+            return STYLE + page_logout_html() + "<div class='container'><script>alert('Email and password required');window.location='/register';</script></div>"
         if User.query.filter_by(email=email).first():
-            return STYLE + "<div class='container'><script>alert('Email already exists');window.location='/register';</script></div>"
+            return STYLE + page_logout_html() + "<div class='container'><script>alert('Email already exists');window.location='/register';</script></div>"
         db.session.add(User(name=name, email=email, password=pwd))
         db.session.commit()
         return redirect("/login")
-    return STYLE + logout_html() + """
-    <div class="container">
-      <h2>Register</h2>
-      <form method="POST">
+    # centered vertical form similar to login
+    return STYLE + page_logout_html() + """
+    <div class="container center-form">
+      <h2 style="width:100%; text-align:left;">Register</h2>
+      <form method="POST" style="width:100%; display:flex; flex-direction:column; gap:12px;">
         <input name="name" placeholder="Name">
         <input name="email" placeholder="Email">
         <input name="password" placeholder="Password" type="password">
-        <button class="black">Register</button>
+        <div style="display:flex; gap:12px;">
+          <button class="black" style="flex:1;">Register</button>
+          <a href="/login"><button type="button" class="black" style="flex:1;">Login</button></a>
+        </div>
       </form>
-      <div style="margin-top:10px;"><a href="/login"><button class="black">Login</button></a></div>
     </div>
     """
 
@@ -226,19 +254,21 @@ def login():
         pwd = request.form.get("password","")
         user = User.query.filter_by(email=email).first()
         if not user or user.password != pwd:
-            return STYLE + "<div class='container'><script>alert('Invalid login');window.location='/login';</script></div>"
+            return STYLE + page_logout_html() + "<div class='container'><script>alert('Invalid login');window.location='/login';</script></div>"
         session["user_id"] = user.id
         session["user_name"] = user.name
         return redirect("/dashboard")
-    return STYLE + logout_html() + """
-    <div class="container">
-      <h2>Login</h2>
-      <form method="POST">
+    return STYLE + page_logout_html() + """
+    <div class="container center-form">
+      <h2 style="width:100%; text-align:left;">Login</h2>
+      <form method="POST" style="width:100%; display:flex; flex-direction:column; gap:12px;">
         <input name="email" placeholder="Email">
         <input name="password" placeholder="Password" type="password">
-        <button class="black">Login</button>
+        <div style="display:flex; gap:12px;">
+          <button class="black" style="flex:1;">Login</button>
+          <a href="/register"><button type="button" class="black" style="flex:1;">Register</button></a>
+        </div>
       </form>
-      <div style="margin-top:10px;"><a href="/register"><button class="black">Register</button></a></div>
     </div>
     """
 
@@ -247,21 +277,21 @@ def logout():
     session.clear()
     return redirect("/")
 
-# ----------------------------------------------------
+# ---------------------------
 # DASHBOARD / PROJECT CRUD
-# ----------------------------------------------------
+# ---------------------------
 @app.route("/dashboard")
 def dashboard():
     if "user_id" not in session:
         return redirect("/login")
     projects = Project.query.all()
     project_list = "".join(f"<li><a href='/project/{p.id}'>{p.name} — Week {p.current_week}/{p.weeks}</a></li>" for p in projects)
-    return STYLE + logout_html() + f"""
+    return STYLE + page_logout_html() + f"""
     <div class="container">
       <div class="header-row"><h1>Welcome {session.get('user_name')}</h1></div>
-      <form method="POST" action="/create_project">
+      <form method="POST" action="/create_project" style="margin-top:12px; display:flex; gap:10px; align-items:center;">
         <input name="name" placeholder="Project name">
-        <input name="weeks" placeholder="Total weeks" type="number">
+        <input name="weeks" placeholder="Total weeks" type="number" style="width:120px;">
         <button class="black">Create Project</button>
       </form>
       <h3 style="margin-top:18px">Projects</h3>
@@ -280,26 +310,26 @@ def create_project():
     db.session.commit()
     return redirect("/dashboard")
 
-# ----------------------------------------------------
+# ---------------------------
 # DOWNLOAD
-# ----------------------------------------------------
+# ---------------------------
 @app.route("/download/<path:fname>")
 def download(fname):
     return send_from_directory(app.config["UPLOAD_FOLDER"], fname, as_attachment=True)
 
-# ----------------------------------------------------
+# ---------------------------
 # FILE DETAIL (for links in emails)
-# ----------------------------------------------------
+# ---------------------------
 @app.route("/file/<int:upload_id>")
 def file_detail(upload_id):
     u = Upload.query.get(upload_id)
     if not u:
-        return STYLE + "<div class='container'>File not found</div>"
+        return STYLE + page_logout_html() + "<div class='container'>File not found</div>"
     download_url = url_for('download', fname=u.file_name, _external=True)
     uploaded_at = u.uploaded_time.strftime("%Y-%m-%d %H:%M:%S") if u.uploaded_time else "N/A"
-    return STYLE + logout_html() + f"""
+    return STYLE + page_logout_html() + f"""
     <div class='container'>
-      <h2>File Details</h2>
+      <div class='header-row'><h1>File Details</h1></div>
       <div class='card'>
         <b>{u.original_name}</b>
         <div class='meta'>Uploaded by: {u.uploaded_by} — {uploaded_at}</div>
@@ -312,16 +342,16 @@ def file_detail(upload_id):
     </div>
     """
 
-# ----------------------------------------------------
-# PROJECT PAGE + UPLOAD + NEXT/FINISH
-# ----------------------------------------------------
+# ---------------------------
+# PROJECT PAGE (Week Details button inside top-right of container)
+# ---------------------------
 @app.route("/project/<int:pid>", methods=["GET","POST"])
 def project_page(pid):
     if "user_id" not in session:
         return redirect("/login")
     p = Project.query.get(pid)
     if not p:
-        return STYLE + "<div class='container'>Project not found</div>"
+        return STYLE + page_logout_html() + "<div class='container'>Project not found</div>"
 
     # upload handling
     if request.method == "POST" and 'file' in request.files:
@@ -337,9 +367,8 @@ def project_page(pid):
         db.session.commit()
 
         # Build absolute links for email
-        host = request.host_url.rstrip("/")
-        download_link = f"{host}/download/{safe}"
-        detail_link = f"{host}{build_file_detail_path(up.id)}"
+        download_link = url_for('download', fname=safe, _external=True)
+        detail_link = url_for('file_detail', upload_id=up.id, _external=True)
 
         # Email body containing description + download link + details link
         email_body = (
@@ -366,29 +395,33 @@ def project_page(pid):
     next_clicked = WeekStatus.query.filter_by(project_id=pid, week_number=p.current_week, user_id=uid, action='next').first()
     finish_clicked = WeekStatus.query.filter_by(project_id=pid, week_number=p.current_week, user_id=uid, action='finish').first()
 
-    # week buttons 1..current_week
+    # week buttons 1..current_week (shown inside container)
     week_buttons = "".join(f"<a href='/project/{pid}/week/{w}'><div class='week-card'>Week {w}</div></a>" for w in range(1, p.current_week+1))
 
     show_next_btn = (p.current_week < p.weeks) and (not next_clicked)
     show_finish_btn = (p.current_week == p.weeks) and (not finish_clicked) and (not p.completed)
 
     if p.completed:
-        return STYLE + logout_html() + f"""
+        return STYLE + page_logout_html() + f"""
         <div class='container'>
-          <h1>{p.name} — Completed 🎉</h1>
+          <div class='header-row'><h1>{p.name} — Completed 🎉</h1></div>
           <p class='small'>Project completed on {p.completed_time}</p>
           <a href='/dashboard'><button class='black'>Back</button></a>
         </div>
         """
 
-    # Insert Week Details button beside logout (top-right)
-    # We'll show Week Details (links to uploads_all) and Logout to the right before container
-    week_details_button_html = f"<a class='logout' href='/project/{pid}/uploads_all'>Week Details</a>"
-    logout_html_btn = "<a class='logout' href='/logout'>Logout</a>"
+    # Week Details button inside container top-right
+    week_details_button_html = f"<a class='logout-btn' href='/project/{pid}/uploads_all' style='float:right;'>Week Details</a>"
 
-    return STYLE + week_details_button_html + logout_html_btn + f"""
+    # Compose page: page logout (fixed) is added by page_logout_html()
+    return STYLE + page_logout_html() + f"""
     <div class='container'>
-      <div class='header-row'><h1>{p.name}</h1></div>
+      <div class='header-row'>
+        <h1>{p.name}</h1>
+        <div style='display:flex; gap:8px; align-items:center;'>
+          {week_details_button_html}
+        </div>
+      </div>
 
       <div class='badges'>
         <span class='badge'>Week {p.current_week}/{p.weeks}</span>
@@ -410,14 +443,13 @@ def project_page(pid):
       <div class='footer-actions'>
         {"<form method='POST' action='/project/"+str(pid)+"/next' style='display:inline-block;'><button class='black'>Go Next Week</button></form>" if show_next_btn else ""}
         {"<form method='POST' action='/project/"+str(pid)+"/finish' style='display:inline-block; margin-left:8px;'><button class='black'>Finish Project</button></form>" if show_finish_btn else ""}
-        <a href='/project/{pid}/uploads_all' style='margin-left:10px;'><button class='black'>Week Details</button></a>
       </div>
     </div>
     """
 
-# ----------------------------------------------------
+# ---------------------------
 # NEXT / FINISH actions
-# ----------------------------------------------------
+# ---------------------------
 @app.route("/project/<int:pid>/next", methods=["POST"])
 def project_next(pid):
     if "user_id" not in session:
@@ -441,7 +473,7 @@ def project_next(pid):
 
 @app.route("/project/<int:pid>/finish", methods=["POST"])
 def project_finish(pid):
-    if "user_id" not in session:
+    if "user_id" not in session":
         return redirect("/login")
     p = Project.query.get(pid)
     if not p or p.completed:
@@ -461,16 +493,16 @@ def project_finish(pid):
         notify_project_users(pid, f"Project {p.name} Completed", f"Project {p.name} has been completed by the whole team.")
     return redirect(f"/project/{pid}")
 
-# ----------------------------------------------------
-# WEEK DETAILS (shows weeks 1..current_week)
-# ----------------------------------------------------
+# ---------------------------
+# WEEK DETAILS (1..current_week)
+# ---------------------------
 @app.route("/project/<int:pid>/uploads_all")
 def uploads_all(pid):
     if "user_id" not in session:
         return redirect("/login")
     p = Project.query.get(pid)
     if not p:
-        return STYLE + "<div class='container'>Project not found</div>"
+        return STYLE + page_logout_html() + "<div class='container'>Project not found</div>"
 
     content = ""
     for week in range(1, p.current_week + 1):
@@ -506,17 +538,17 @@ def uploads_all(pid):
         </div>
         """
 
-    return STYLE + logout_html() + f"""
+    return STYLE + page_logout_html() + f"""
     <div class='container'>
-      <h2>{p.name} — Week details (1..{p.current_week})</h2>
+      <div class='header-row'><h1>{p.name} — Week details (1..{p.current_week})</h1></div>
       {content}
       <a href='/project/{pid}'><button class='black'>Back</button></a>
     </div>
     """
 
-# ----------------------------------------------------
-# TEST EMAIL
-# ----------------------------------------------------
+# ---------------------------
+# TEST EMAIL (optional)
+# ---------------------------
 @app.route("/test_email")
 def test_email():
     to = os.environ.get("TEST_TO", "")
@@ -525,8 +557,8 @@ def test_email():
     ok = send_email(to, "Test email", "This is a test from Resend API.")
     return "OK" if ok else "FAILED"
 
-# ----------------------------------------------------
+# ---------------------------
 # RUN
-# ----------------------------------------------------
+# ---------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
