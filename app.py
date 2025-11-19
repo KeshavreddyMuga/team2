@@ -473,7 +473,7 @@ def project_next(pid):
 
 @app.route("/project/<int:pid>/finish", methods=["POST"])
 def project_finish(pid):
-    if "user_id" not in session":
+    if "user_id" not in session:
         return redirect("/login")
     p = Project.query.get(pid)
     if not p or p.completed:
