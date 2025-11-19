@@ -1,7 +1,6 @@
 import os
 import traceback
 import requests
-from email.message import EmailMessage
 from datetime import datetime
 from uuid import uuid4
 from flask import Flask, request, redirect, session, send_from_directory
@@ -10,7 +9,7 @@ from flask_socketio import SocketIO
 from werkzeug.utils import secure_filename
 
 # ----------------------------------------------------
-# CONFIG
+# FLASK CONFIG
 # ----------------------------------------------------
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "team_secret_key")
@@ -18,11 +17,14 @@ app.secret_key = os.environ.get("SECRET_KEY", "team_secret_key")
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///team_workspace.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "uploads")
+
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
-# Resend API
+# ----------------------------------------------------
+# RESEND CONFIG
+# ----------------------------------------------------
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL")  # Example: onboarding@resend.dev
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL")  # Example: Keshava <onboarding@resend.dev>
 
 db = SQLAlchemy(app)
 
@@ -34,36 +36,19 @@ socketio = SocketIO(
 )
 
 # ----------------------------------------------------
-# STYLE
+# STYLE / UI
 # ----------------------------------------------------
 STYLE = """
 <link href='https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@5/dark.css' rel='stylesheet'>
 <script src='https://cdn.jsdelivr.net/npm/sweetalert2@11'></script>
-<script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
-
 <style>
-body {
-    font-family: Arial;
-    background: linear-gradient(135deg,#9b5de5,#f15bb5,#00bbf9,#00f5d4);
-    padding: 30px; margin: 0; background-attachment: fixed;
-}
-.container {
-    background: #f5e9ff; padding:25px; border-radius:14px;
-    max-width:920px; margin:auto; box-shadow:0 0 25px rgba(0,0,0,0.2);
-    position: relative;
-}
-label { font-weight:bold; margin-top:12px; display:block; }
-input, textarea { width:100%; padding:12px; margin-top:5px; border-radius:8px; border:1px solid #bbb; }
-button { width:100%; padding:12px; margin-top:12px; border-radius:10px; border:none; cursor:pointer; color:white; background:linear-gradient(45deg,#000,#444); }
-button.small { width:auto; padding:8px 14px; font-size:14px; }
-.upload-item { padding:10px; border-bottom:1px solid #ddd; }
-.meta { font-size:13px; color:#555; margin-top:6px; }
-.top-right-btn {
-    position:absolute; top:15px; right:15px;
-    background: linear-gradient(45deg,#222,#444);
-    color:white; border-radius:8px; padding:8px 12px;
-    text-decoration:none; font-weight:600;
-}
+body { font-family: Arial; background: #f0f0ff; padding: 25px; }
+.container { background: #fff; padding:20px; border-radius:14px; max-width:900px; margin:auto; box-shadow:0 0 15px rgba(0,0,0,0.15); position:relative; }
+button { padding:10px; border:none; border-radius:8px; background:black; color:white; cursor:pointer; margin-top:10px; }
+input, textarea { width:100%; padding:10px; border-radius:6px; border:1px solid #ccc; margin-top:5px; }
+.top-right-btn { position:absolute; top:10px; right:10px; background:black; color:white; padding:8px 12px; border-radius:8px; text-decoration:none; }
+.upload-item { padding:8px; border-bottom:1px solid #ddd; }
+.meta { font-size:12px; color:#666; }
 </style>
 """
 
@@ -71,7 +56,7 @@ def logout_btn():
     return "<a class='top-right-btn' href='/logout'>Logout</a>" if session.get("user_id") else ""
 
 # ----------------------------------------------------
-# MODELS
+# DATABASE MODELS
 # ----------------------------------------------------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -98,13 +83,14 @@ with app.app_context():
     db.create_all()
 
 # ----------------------------------------------------
-# EMAIL (RESEND API)
+# RESEND — EMAIL FUNCTIONS
 # ----------------------------------------------------
 def send_email(to, subject, body):
+    """Send a single email using Resend API."""
     try:
         url = "https://api.resend.com/emails"
 
-        data = {
+        payload = {
             "from": SENDER_EMAIL,
             "to": to,
             "subject": subject,
@@ -116,9 +102,10 @@ def send_email(to, subject, body):
             "Content-Type": "application/json"
         }
 
-        r = requests.post(url, json=data, headers=headers)
+        r = requests.post(url, json=payload, headers=headers)
         print("RESEND STATUS:", r.status_code, r.text)
-        return r.status_code in [200, 201]
+
+        return r.status_code in (200, 201)
 
     except Exception as e:
         print("RESEND ERROR:", e)
@@ -127,11 +114,16 @@ def send_email(to, subject, body):
 
 
 def send_email_to_all(subject, body):
-    users = User.query.all()
-    for u in users:
-        if u.email:
-            send_email(u.email, subject, body)
-    return True
+    """Send email to every registered user."""
+    try:
+        users = User.query.all()
+        for u in users:
+            if u.email:
+                send_email(u.email, subject, body)
+        return True
+    except:
+        traceback.print_exc()
+        return False
 
 # ----------------------------------------------------
 # ROUTES
@@ -141,8 +133,8 @@ def home():
     return STYLE + logout_btn() + """
     <div class='container'>
         <h2>Team Workspace Organizer</h2>
-        <a href='/login'><button class='small'>Login</button></a>
-        <a href='/register'><button class='small'>Register</button></a>
+        <a href='/login'><button>Login</button></a>
+        <a href='/register'><button>Register</button></a>
     </div>
 """
 
@@ -154,22 +146,22 @@ def register():
         pwd = request.form["password"]
 
         if User.query.filter_by(email=email).first():
-            return STYLE + logout_btn() + "<script>alert('Email already registered');window.location='/register';</script>"
+            return STYLE + "<script>alert('Email already registered');window.location='/register';</script>"
 
         db.session.add(User(name=name, email=email, password=pwd))
         db.session.commit()
         return redirect("/login")
 
-    return STYLE + logout_btn() + """
+    return STYLE + """
     <div class='container'>
         <h2>Register</h2>
         <form method='POST'>
             <label>Name</label><input name='name'>
             <label>Email</label><input name='email'>
-            <label>Password</label><input type='password' name='password'>
+            <label>Password</label><input name='password' type='password'>
             <button>Register</button>
         </form>
-        <a href='/login'><button class='small'>Login</button></a>
+        <a href='/login'><button>Login</button></a>
     </div>
 """
 
@@ -181,21 +173,21 @@ def login():
 
         user = User.query.filter_by(email=email).first()
         if not user or user.password != pwd:
-            return STYLE + logout_btn() + "<script>alert('Invalid login');window.location='/login';</script>"
+            return STYLE + "<script>alert('Invalid login');window.location='/login';</script>"
 
         session["user_id"] = user.id
         session["user_name"] = user.name
         return redirect("/dashboard")
 
-    return STYLE + logout_btn() + """
+    return STYLE + """
     <div class='container'>
         <h2>Login</h2>
         <form method='POST'>
             <label>Email</label><input name='email'>
-            <label>Password</label><input type='password' name='password'>
+            <label>Password</label><input name='password' type='password'>
             <button>Login</button>
         </form>
-        <a href='/register'><button class='small'>Register</button></a>
+        <a href='/register'><button>Register</button></a>
     </div>
 """
 
@@ -215,11 +207,14 @@ def dashboard():
     return STYLE + logout_btn() + f"""
     <div class='container'>
         <h2>Welcome {session['user_name']}</h2>
-        <form method='POST' action='/create_project'>
+
+        <form action='/create_project' method='POST'>
             <label>Project Name</label><input name='name'>
-            <label>Weeks</label><input type='number' name='weeks'>
+            <label>Weeks</label><input name='weeks' type='number'>
             <button>Create Project</button>
         </form>
+
+        <h3>Your Projects</h3>
         <ul>{html}</ul>
     </div>
 """
@@ -231,6 +226,7 @@ def create_project():
 
     name = request.form["name"]
     weeks = int(request.form["weeks"])
+
     p = Project(name=name, weeks=weeks)
     db.session.add(p)
     db.session.commit()
@@ -247,8 +243,9 @@ def project_page(pid):
         return redirect("/login")
 
     project = Project.query.get(pid)
+
     if not project:
-        return STYLE + logout_btn() + "<div class='container'><h2>Project not found</h2></div>"
+        return STYLE + logout_btn() + f"<div class='container'><h2>Project not found</h2></div>"
 
     if request.method == "POST":
         f = request.files["file"]
@@ -270,7 +267,10 @@ def project_page(pid):
         ))
         db.session.commit()
 
-        send_email_to_all(f"New file in {project.name}", f"{session['user_name']} uploaded {original}")
+        send_email_to_all(
+            f"New file uploaded to {project.name}",
+            f"{session['user_name']} uploaded: {original}"
+        )
 
         return redirect(f"/project/{pid}")
 
@@ -280,38 +280,32 @@ def project_page(pid):
     ).order_by(Upload.uploaded_time.desc()).all()
 
     items = "".join(
-        f"<div class='upload-item'><b>{u.file_name}</b> — <a href='/download/{u.file_name}'>Download</a>"
+        f"<div class='upload-item'><b>{u.file_name}</b> — "
+        f"<a href='/download/{u.file_name}'>Download</a>"
         f"<div class='meta'>Uploaded by {u.uploaded_by}</div></div>"
         for u in uploads
-    ) or "<p>No files yet</p>"
+    ) or "<p>No files uploaded yet</p>"
 
     return STYLE + logout_btn() + f"""
     <div class='container'>
         <h2>{project.name} — Week {project.current_week}</h2>
         {items}
         <form method='POST' enctype='multipart/form-data'>
-            <label>Select File</label><input type='file' name='file' required>
+            <label>Select File</label><input type='file' name='file'>
             <label>Description</label><textarea name='description'></textarea>
             <button>Upload</button>
         </form>
-        <a href='/dashboard'><button class='small'>Back</button></a>
-    </div>
-"""
-
-@app.route("/project_completed/<int:pid>")
-def project_completed(pid):
-    return STYLE + logout_btn() + """
-    <div class='container'>
-        <h2>Project Completed</h2>
-        <a href='/dashboard'><button class='small'>Back</button></a>
+        <a href='/dashboard'><button>Back</button></a>
     </div>
 """
 
 @app.route("/test_email")
 def test_email():
-    ok = send_email("keshavareddymuga@gmail.com", "Test Email", "Render + Resend working!")
-    return "Sent!" if ok else "Failed"
+    ok = send_email("keshavareddymuga@gmail.com", "Test Email", "Resend is working!")
+    return "Email sent!" if ok else "Email failed"
 
+# ----------------------------------------------------
+# RUN
 # ----------------------------------------------------
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
