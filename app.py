@@ -5,6 +5,7 @@ import requests
 from datetime import datetime
 from uuid import uuid4
 from flask import Flask, request, redirect, session, send_from_directory, url_for, abort
+
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.utils import secure_filename
 
@@ -28,7 +29,7 @@ SENDER_EMAIL = os.environ.get("EMAIL_FROM", "Team Workspace <onboarding@resend.d
 db = SQLAlchemy(app)
 
 # ----------------------------------------------------
-# UI STYLE (Gradient A + glass + black buttons)
+# STYLE (Gradient A + glass + black buttons)
 # ----------------------------------------------------
 STYLE = """
 <style>
@@ -59,6 +60,7 @@ a.logout{
   border-radius:10px;
   text-decoration:none;
   font-weight:600;
+  margin-left:8px;
 }
 .badges{ margin:12px 0; }
 .badge{
@@ -102,7 +104,7 @@ button.black{
 """
 
 # ----------------------------------------------------
-# DB MODELS
+# DATABASE MODELS
 # ----------------------------------------------------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -140,7 +142,7 @@ with app.app_context():
     db.create_all()
 
 # ----------------------------------------------------
-# EMAIL (Resend)
+# EMAIL: Resend API
 # ----------------------------------------------------
 def send_email(to, subject, body):
     if not RESEND_API_KEY:
@@ -158,13 +160,12 @@ def send_email(to, subject, body):
         return False
 
 def notify_all_users(subject, body):
-    users = User.query.all()
-    for u in users:
+    for u in User.query.all():
         if u.email:
             send_email(u.email, subject, body)
 
 def notify_project_users(project_id, subject, body):
-    # for now notify all users (Option A)
+    # currently not per-project membership — notify all users
     notify_all_users(subject, body)
 
 # ----------------------------------------------------
@@ -173,9 +174,7 @@ def notify_project_users(project_id, subject, body):
 def logout_html():
     return "<a class='logout' href='/logout'>Logout</a>" if session.get("user_id") else ""
 
-def build_file_detail_url(upload_id):
-    # public file detail route
-    # uses request.host_url at runtime when constructing in code
+def build_file_detail_path(upload_id):
     return f"/file/{upload_id}"
 
 # ----------------------------------------------------
@@ -282,13 +281,15 @@ def create_project():
     return redirect("/dashboard")
 
 # ----------------------------------------------------
-# UPLOADS / DOWNLOAD
+# DOWNLOAD
 # ----------------------------------------------------
 @app.route("/download/<path:fname>")
 def download(fname):
     return send_from_directory(app.config["UPLOAD_FOLDER"], fname, as_attachment=True)
 
-# File detail page route (used by emails)
+# ----------------------------------------------------
+# FILE DETAIL (for links in emails)
+# ----------------------------------------------------
 @app.route("/file/<int:upload_id>")
 def file_detail(upload_id):
     u = Upload.query.get(upload_id)
@@ -303,14 +304,16 @@ def file_detail(upload_id):
         <b>{u.original_name}</b>
         <div class='meta'>Uploaded by: {u.uploaded_by} — {uploaded_at}</div>
         <p style='margin-top:10px'>{(u.description or 'No description provided')}</p>
-        <a class='link' href='{download_url}'>Download file</a>
+        <div style='margin-top:10px'>
+          <a class='link' href='{download_url}'>Download file</a>
+        </div>
       </div>
       <a href='/project/{u.project_id}'><button class='black'>Back to Project</button></a>
     </div>
     """
 
 # ----------------------------------------------------
-# PROJECT PAGE + WEEK DETAILS + Upload form
+# PROJECT PAGE + UPLOAD + NEXT/FINISH
 # ----------------------------------------------------
 @app.route("/project/<int:pid>", methods=["GET","POST"])
 def project_page(pid):
@@ -320,7 +323,7 @@ def project_page(pid):
     if not p:
         return STYLE + "<div class='container'>Project not found</div>"
 
-    # handle upload POST
+    # upload handling
     if request.method == "POST" and 'file' in request.files:
         f = request.files["file"]
         if not f or f.filename == "":
@@ -333,31 +336,29 @@ def project_page(pid):
         db.session.add(up)
         db.session.commit()
 
-        # Build link to file detail
+        # Build absolute links for email
         host = request.host_url.rstrip("/")
-        detail_path = build_file_detail_url(up.id)
-        detail_url = f"{host}{detail_path}"
+        download_link = f"{host}/download/{safe}"
+        detail_link = f"{host}{build_file_detail_path(up.id)}"
 
-        # email body with clickable link
+        # Email body containing description + download link + details link
         email_body = (
-            f"New file uploaded to project: {p.name}\n\n"
+            f"New file uploaded in project: {p.name}\n\n"
             f"Uploaded by: {session.get('user_name')}\n"
             f"Week: {p.current_week}\n"
             f"File: {original}\n"
             f"Description: {desc or 'No description provided'}\n\n"
-            f"View details: {detail_url}\n"
-            f"Download: {host}/download/{safe}\n"
+            f"Download link: {download_link}\n"
+            f"View details: {detail_link}\n"
         )
         notify_project_users(pid, f"New upload in {p.name}", email_body)
         return redirect(f"/project/{pid}")
 
-    # list current week uploads
     uploads = Upload.query.filter_by(project_id=pid, week_number=p.current_week).all()
     file_list = ""
     for u in uploads:
         file_list += f"<div class='file-box'><b>{u.original_name}</b> — {u.uploaded_by} — <a class='link' href='/download/{u.file_name}'>Download</a></div>"
 
-    # counts & status
     uid = session.get("user_id")
     total_users = User.query.count() or 1
     next_count = WeekStatus.query.filter_by(project_id=pid, week_number=p.current_week, action='next').count()
@@ -365,7 +366,7 @@ def project_page(pid):
     next_clicked = WeekStatus.query.filter_by(project_id=pid, week_number=p.current_week, user_id=uid, action='next').first()
     finish_clicked = WeekStatus.query.filter_by(project_id=pid, week_number=p.current_week, user_id=uid, action='finish').first()
 
-    # week details summary only for weeks 1..current_week
+    # week buttons 1..current_week
     week_buttons = "".join(f"<a href='/project/{pid}/week/{w}'><div class='week-card'>Week {w}</div></a>" for w in range(1, p.current_week+1))
 
     show_next_btn = (p.current_week < p.weeks) and (not next_clicked)
@@ -380,9 +381,15 @@ def project_page(pid):
         </div>
         """
 
-    return STYLE + logout_html() + f"""
+    # Insert Week Details button beside logout (top-right)
+    # We'll show Week Details (links to uploads_all) and Logout to the right before container
+    week_details_button_html = f"<a class='logout' href='/project/{pid}/uploads_all'>Week Details</a>"
+    logout_html_btn = "<a class='logout' href='/logout'>Logout</a>"
+
+    return STYLE + week_details_button_html + logout_html_btn + f"""
     <div class='container'>
-      <div class='header-row'><h1>{p.name}</h1>{logout_html()}</div>
+      <div class='header-row'><h1>{p.name}</h1></div>
+
       <div class='badges'>
         <span class='badge'>Week {p.current_week}/{p.weeks}</span>
         <span class='badge'>Next: {next_count}/{total_users}</span>
@@ -409,7 +416,7 @@ def project_page(pid):
     """
 
 # ----------------------------------------------------
-# POST: click next / finish
+# NEXT / FINISH actions
 # ----------------------------------------------------
 @app.route("/project/<int:pid>/next", methods=["POST"])
 def project_next(pid):
@@ -455,7 +462,7 @@ def project_finish(pid):
     return redirect(f"/project/{pid}")
 
 # ----------------------------------------------------
-# Week Details (shows weeks 1..current_week with styled cards)
+# WEEK DETAILS (shows weeks 1..current_week)
 # ----------------------------------------------------
 @app.route("/project/<int:pid>/uploads_all")
 def uploads_all(pid):
@@ -472,7 +479,8 @@ def uploads_all(pid):
         finish_users = WeekStatus.query.filter_by(project_id=pid, week_number=week, action='finish').all()
         next_names = ", ".join([User.query.get(ws.user_id).name for ws in next_users if User.query.get(ws.user_id)])
         finish_names = ", ".join([User.query.get(ws.user_id).name for ws in finish_users if User.query.get(ws.user_id)])
-        pending = ", ".join([u.name for u in User.query.all() if u.name not in next_names and u.name not in finish_names])
+        pending_list = [u.name for u in User.query.all() if u.name not in next_names.split(", ") and u.name not in finish_names.split(", ")]
+        pending = ", ".join([n for n in pending_list if n])
 
         file_cards = ""
         if uploads:
@@ -490,11 +498,11 @@ def uploads_all(pid):
 
         content += f"""
         <h3 style='margin-top:14px'>Week {week}</h3>
-        <div class='week-card'>
-          <div style='margin-bottom:8px'>{file_cards}</div>
-          <div><b>Next clicked:</b> {next_names or '—'}</div>
-          <div><b>Finish clicked:</b> {finish_names or '—'}</div>
-          <div><b>Pending:</b> {pending or '—'}</div>
+        <div class='card'>
+          {file_cards}
+          <div style='margin-top:8px'><b>Next clicked:</b> {next_names or '—'}</div>
+          <div style='margin-top:4px'><b>Finish clicked:</b> {finish_names or '—'}</div>
+          <div style='margin-top:4px'><b>Pending:</b> {pending or '—'}</div>
         </div>
         """
 
@@ -507,11 +515,14 @@ def uploads_all(pid):
     """
 
 # ----------------------------------------------------
-# Quick test email route (internal)
+# TEST EMAIL
 # ----------------------------------------------------
 @app.route("/test_email")
 def test_email():
-    ok = send_email(os.environ.get("TEST_TO","your@email.com"), "Test email", "This is a test from Resend API.")
+    to = os.environ.get("TEST_TO", "")
+    if not to:
+        return "Set TEST_TO env var for a quick test."
+    ok = send_email(to, "Test email", "This is a test from Resend API.")
     return "OK" if ok else "FAILED"
 
 # ----------------------------------------------------
