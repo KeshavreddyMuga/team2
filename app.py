@@ -1,4 +1,4 @@
-# app_option_a.py
+# app.py
 import os
 import traceback
 import requests
@@ -218,6 +218,42 @@ def download(f):
     return send_from_directory(app.config["UPLOAD_FOLDER"], f, as_attachment=True)
 
 # ----------------------------------------------------
+# NEW: Show all uploads up to current week (week-wise details)
+@app.route("/project/<int:pid>/uploads_all")
+def uploads_all(pid):
+    if "user_id" not in session:
+        return redirect("/login")
+
+    p = Project.query.get(pid)
+    if not p:
+        return STYLE + "<div class='container'>Project not found</div>"
+
+    file_list = ""
+
+    # Loop all weeks up to current week
+    for week in range(1, p.current_week + 1):
+        uploads = Upload.query.filter_by(project_id=pid, week_number=week).all()
+        file_list += f"<h3>Week {week}</h3>"
+
+        if not uploads:
+            file_list += "<p>No uploads this week.</p>"
+            continue
+
+        for u in uploads:
+            ts = u.uploaded_time.strftime('%Y-%m-%d %H:%M:%S') if u.uploaded_time else 'N/A'
+            file_list += f"<div><b>{u.file_name}</b> — uploaded by <i>{u.uploaded_by}</i> at {ts} — <a href='/download/{u.file_name}'>Download</a></div>"
+
+        file_list += "<hr>"
+
+    return STYLE + logout_btn() + f"""
+    <div class='container'>
+        <h2>{p.name} — All Uploads Until Week {p.current_week}</h2>
+        {file_list}
+        <br><a href='/project/{pid}'><button>Back</button></a>
+    </div>
+    """
+
+# ----------------------------------------------------
 # PROJECT PAGE + UPLOADS + NEXT/FINISH logic (Option A)
 # ----------------------------------------------------
 @app.route("/project/<int:pid>", methods=["GET","POST"])
@@ -239,9 +275,12 @@ def project(pid):
         notify_project_users(pid, f"New upload in {p.name}", f"{session['user_name']} uploaded {f.filename}")
         return redirect(f"/project/{pid}")
 
-    # list uploads
+    # list uploads (for current week)
     uploads = Upload.query.filter_by(project_id=pid, week_number=p.current_week).all()
-    files = "".join(f"<div>{u.file_name} — <a href='/download/{u.file_name}'>Download</a></div>" for u in uploads)
+    files = ""
+    for u in uploads:
+        ts = u.uploaded_time.strftime('%Y-%m-%d %H:%M:%S') if u.uploaded_time else 'N/A'
+        files += f"<div>{u.file_name} — uploaded by <i>{u.uploaded_by}</i> at {ts} — <a href='/download/{u.file_name}'>Download</a></div>"
 
     # status for current user
     uid = session["user_id"]
@@ -276,6 +315,7 @@ def project(pid):
         </div>
         <hr/>
         {files}
+        <a href='/project/{pid}/uploads_all'><button type='button'>Show All Week Uploads</button></a>
         <form method='POST' enctype='multipart/form-data'>
             <input type='file' name='file'>
             <textarea name='description' placeholder='Description'></textarea>
