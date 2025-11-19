@@ -1,6 +1,4 @@
 import os
-os.environ["GEVENT_SUPPORT"] = "False"   # 🔥 IMPORTANT FIX FOR RESEND + RENDER
-
 import traceback
 import requests
 from datetime import datetime
@@ -10,75 +8,39 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO
 from werkzeug.utils import secure_filename
 
-# ----------------------------------------------------
-# FLASK CONFIG
-# ----------------------------------------------------
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "team_secret_key")
 
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///team_workspace.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "uploads")
-
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
-# ----------------------------------------------------
-# RESEND CONFIG
-# ----------------------------------------------------
+# ---------- RESEND ----------
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 
 db = SQLAlchemy(app)
 
-# Force threading only (NO GEvent)
+# ******************** IMPORTANT FIX ********************
 socketio = SocketIO(
     app,
-    async_mode="threading",
     cors_allowed_origins="*",
+    async_mode="threading",   # <---- FIXED!! no gevent, no recursion
     engineio_logger=False,
 )
+# *********************************************************
 
-# ----------------------------------------------------
-# EMAIL SENDER (RESEND)
-# ----------------------------------------------------
-def send_email(to, subject, body):
-    try:
-        url = "https://api.resend.com/emails"
+# ---------- UI STYLE ----------
+STYLE = """
+<link href='https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@5/dark.css' rel='stylesheet'>
+<script src='https://cdn.jsdelivr.net/npm/sweetalert2@11'></script>
+"""
 
-        payload = {
-            "from": SENDER_EMAIL,
-            "to": to,
-            "subject": subject,
-            "text": body
-        }
+def logout_btn():
+    return "<a class='top-right-btn' href='/logout'>Logout</a>" if session.get("user_id") else ""
 
-        headers = {
-            "Authorization": f"Bearer {RESEND_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        r = requests.post(url, json=payload, headers=headers, timeout=10)
-        print("RESEND STATUS:", r.status_code, r.text)
-
-        return r.status_code in (200, 201)
-
-    except Exception as e:
-        print("RESEND ERROR:", e)
-        traceback.print_exc()
-        return False
-
-
-def send_email_to_all(subject, body):
-    try:
-        users = User.query.all()
-        for u in users:
-            send_email(u.email, subject, body)
-    except:
-        traceback.print_exc()
-
-# ----------------------------------------------------
-# MODELS
-# ----------------------------------------------------
+# ---------- MODELS ----------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(150))
@@ -103,16 +65,48 @@ class Upload(db.Model):
 with app.app_context():
     db.create_all()
 
-# ----------------------------------------------------
-# ROUTES
-# ----------------------------------------------------
+# ---------- RESEND EMAIL ----------
+def send_email(to, subject, body):
+    try:
+        url = "https://api.resend.com/emails"
+
+        data = {
+            "from": SENDER_EMAIL,
+            "to": to,
+            "subject": subject,
+            "text": body,
+        }
+
+        headers = {
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        r = requests.post(url, json=data, headers=headers)
+        print("RESEND:", r.status_code, r.text)
+        return r.status_code in (200, 201)
+
+    except Exception as e:
+        print("RESEND ERROR:", e)
+        traceback.print_exc()
+        return False
+
+def send_email_to_all(subject, body):
+    users = User.query.all()
+    for u in users:
+        if u.email:
+            send_email(u.email, subject, body)
+
+# ---------- ROUTES ----------
 @app.route("/")
 def home():
-    return """
-        <h2>Team Workspace Organizer</h2>
-        <a href='/login'>Login</a> | 
-        <a href='/register'>Register</a>
-    """
+    return STYLE + """
+    <div class='container'>
+        <h2>Team Workspace</h2>
+        <a href='/login'><button>Login</button></a>
+        <a href='/register'><button>Register</button></a>
+    </div>
+"""
 
 @app.route("/register", methods=["GET","POST"])
 def register():
@@ -122,127 +116,131 @@ def register():
         pwd = request.form["password"]
 
         if User.query.filter_by(email=email).first():
-            return "Email already registered"
+            return STYLE + "<script>alert('Email already registered');window.location='/register';</script>"
 
         db.session.add(User(name=name, email=email, password=pwd))
         db.session.commit()
         return redirect("/login")
 
-    return """
+    return STYLE + """
+    <div class='container'>
         <h2>Register</h2>
         <form method='POST'>
-            <input name='name'>
-            <input name='email'>
-            <input name='password'>
+            <label>Name</label><input name='name'>
+            <label>Email</label><input name='email'>
+            <label>Password</label><input name='password' type='password'>
             <button>Register</button>
         </form>
-    """
+        <a href='/login'><button>Login</button></a>
+    </div>
+"""
 
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":
-        email = request.form["email"]
+        email = request.form["email"].strip().lower()
         pwd = request.form["password"]
-
         user = User.query.filter_by(email=email).first()
+
         if not user or user.password != pwd:
-            return "Invalid login"
+            return STYLE + "<script>alert('Invalid login');window.location='/login';</script>"
 
         session["user_id"] = user.id
         session["user_name"] = user.name
         return redirect("/dashboard")
 
-    return """
+    return STYLE + """
+    <div class='container'>
         <h2>Login</h2>
         <form method='POST'>
-            <input name='email'>
-            <input name='password'>
+            <label>Email</label><input name='email'>
+            <label>Password</label><input name='password' type='password'>
             <button>Login</button>
         </form>
-    """
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect("/")
+        <a href='/register'><button>Register</button></a>
+    </div>
+"""
 
 @app.route("/dashboard")
 def dashboard():
+    if "user_id" not in session:
+        return redirect("/login")
+
     projects = Project.query.all()
     html = "".join(f"<li><a href='/project/{p.id}'>{p.name}</a></li>" for p in projects)
 
-    return f"""
-        <h2>Welcome</h2>
-        <form method='POST' action='/create_project'>
-            <input name='name' placeholder='Project name'>
-            <input name='weeks' placeholder='Weeks'>
-            <button>Create</button>
+    return STYLE + f"""
+    <div class='container'>
+        <h2>Welcome {session['user_name']}</h2>
+
+        <form action='/create_project' method='POST'>
+            <label>Project Name</label><input name='name'>
+            <label>Weeks</label><input name='weeks' type='number'>
+            <button>Create Project</button>
         </form>
+
+        <h3>Your Projects</h3>
         <ul>{html}</ul>
-    """
+    </div>
+"""
 
 @app.route("/create_project", methods=["POST"])
 def create_project():
     name = request.form["name"]
     weeks = int(request.form["weeks"])
-
     p = Project(name=name, weeks=weeks)
     db.session.add(p)
     db.session.commit()
-
     return redirect("/dashboard")
 
 @app.route("/project/<int:pid>", methods=["GET","POST"])
-def project_page(pid):
-    project = Project.query.get(pid)
-    if not project:
-        return "Project not found"
+def project(pid):
+    if "user_id" not in session:
+        return redirect("/login")
+
+    p = Project.query.get(pid)
+    if not p:
+        return "<h2>Project not found</h2>"
 
     if request.method == "POST":
         f = request.files["file"]
         desc = request.form.get("description", "")
 
-        original = secure_filename(f.filename)
-        uid = uuid4().hex[:6]
-        fname = f"{uid}_{original}"
-
+        fname = f"{datetime.utcnow().timestamp()}_{uuid4().hex}_{secure_filename(f.filename)}"
         f.save(os.path.join(app.config["UPLOAD_FOLDER"], fname))
 
-        db.session.add(Upload(
+        up = Upload(
             project_id=pid,
-            week_number=project.current_week,
+            week_number=p.current_week,
             file_name=fname,
             uploaded_by=session["user_name"],
             description=desc
-        ))
+        )
+
+        db.session.add(up)
         db.session.commit()
 
-        send_email_to_all(
-            f"New Upload for {project.name}",
-            f"{session['user_name']} uploaded {original}"
-        )
+        send_email_to_all(f"New upload in {p.name}", f"{session['user_name']} uploaded {f.filename}")
 
         return redirect(f"/project/{pid}")
 
     uploads = Upload.query.filter_by(project_id=pid).all()
-
-    items = "".join(f"<p>{u.file_name}</p>" for u in uploads)
+    ul = "".join(f"<div>{u.file_name}</div>" for u in uploads)
 
     return f"""
-        <h2>{project.name}</h2>
-        {items}
-        <form method='POST' enctype='multipart/form-data'>
-            <input type='file' name='file'>
-            <textarea name='description'></textarea>
-            <button>Upload</button>
-        </form>
-    """
+    <h2>{p.name}</h2>
+    {ul}
+    <form method='POST' enctype='multipart/form-data'>
+        <input type='file' name='file'>
+        <textarea name='description'></textarea>
+        <button>Upload</button>
+    </form>
+"""
 
 @app.route("/test_email")
 def test_email():
-    ok = send_email("keshavareddymuga@gmail.com", "Test Email", "Resend Works!")
-    return "OK" if ok else "FAIL"
+    send_email("keshavareddymuga@gmail.com", "Test Email", "Resend works!")
+    return "Sent test email."
 
-# ----------------------------------------------------
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
