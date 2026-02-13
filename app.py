@@ -1,4 +1,6 @@
+# app.py
 import os
+import traceback
 import requests
 from datetime import datetime
 from uuid import uuid4
@@ -6,12 +8,15 @@ from flask import Flask, request, redirect, session, send_from_directory, url_fo
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.utils import secure_filename
 
+# ---------------------------
+# FLASK CONFIG
+# ---------------------------
 app = Flask(__name__)
-app.secret_key = "team_secret_key"
+app.secret_key = os.environ.get("SECRET_KEY", "team_secret_key")
 
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///team_workspace.db"
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///team_workspace.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["UPLOAD_FOLDER"] = "uploads"
+app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "uploads")
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
@@ -19,14 +24,16 @@ SENDER_EMAIL = os.environ.get("EMAIL_FROM", "Team Workspace <onboarding@resend.d
 
 db = SQLAlchemy(app)
 
-# ---------------- MODELS ----------------
-
+# ---------------------------
+# MODELS
+# ---------------------------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(150))
     email = db.Column(db.String(200), unique=True)
     password = db.Column(db.String(200))
-    role = db.Column(db.String(20), default="member")  # admin/member
+    role = db.Column(db.String(20), default="member")  # 🔥 NEW FIELD
+
 
 class Project(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -34,7 +41,8 @@ class Project(db.Model):
     weeks = db.Column(db.Integer)
     current_week = db.Column(db.Integer, default=1)
     completed = db.Column(db.Boolean, default=False)
-    completed_time = db.Column(db.DateTime)
+    completed_time = db.Column(db.DateTime, nullable=True)
+
 
 class Upload(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -46,268 +54,177 @@ class Upload(db.Model):
     description = db.Column(db.Text)
     uploaded_time = db.Column(db.DateTime, default=datetime.utcnow)
 
+
+class WeekStatus(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer)
+    week_number = db.Column(db.Integer)
+    user_id = db.Column(db.Integer)
+    action = db.Column(db.String(20))
+    clicked_time = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 with app.app_context():
     db.create_all()
 
-# ---------------- EMAIL ----------------
-
+# ---------------------------
+# EMAIL (Resend)
+# ---------------------------
 def send_email(to, subject, body):
     if not RESEND_API_KEY:
         return False
-    url = "https://api.resend.com/emails"
-    headers = {
-        "Authorization": f"Bearer {RESEND_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "from": SENDER_EMAIL,
-        "to": to,
-        "subject": subject,
-        "text": body
-    }
-    r = requests.post(url, json=data, headers=headers)
-    return r.status_code in (200, 201)
+    try:
+        url = "https://api.resend.com/emails"
+        payload = {"from": SENDER_EMAIL, "to": to, "subject": subject, "text": body}
+        headers = {"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"}
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
+        return r.status_code in (200, 201)
+    except:
+        return False
+
 
 def notify_all_users(subject, body):
     for u in User.query.all():
         if u.email:
             send_email(u.email, subject, body)
 
-# ---------------- AUTH ----------------
 
+def notify_project_users(project_id, subject, body):
+    notify_all_users(subject, body)
+
+
+# ---------------------------
+# AUTH ROUTES
+# ---------------------------
 @app.route("/")
 def home():
     return """
-    <h1>Team Workspace</h1>
-    <a href='/register'>Register</a> |
-    <a href='/login'>Login</a>
+    <h2>Team Workspace</h2>
+    <a href="/login">Login</a><br>
+    <a href="/register">Register</a>
     """
 
-@app.route("/register", methods=["GET","POST"])
+
+@app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
-        name = request.form["name"]
-        email = request.form["email"].lower()
-        password = request.form["password"]
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        pwd = request.form.get("password", "")
+
+        if not email or not pwd:
+            return "Email and password required"
 
         if User.query.filter_by(email=email).first():
             return "Email already exists"
 
-        role = "admin" if User.query.count() == 0 else "member"
+        # 🔥 FIRST USER = ADMIN
+        if User.query.count() == 0:
+            role = "admin"
+        else:
+            role = "member"
 
-        db.session.add(User(name=name, email=email, password=password, role=role))
+        new_user = User(
+            name=name,
+            email=email,
+            password=pwd,
+            role=role
+        )
+
+        db.session.add(new_user)
         db.session.commit()
+
         return redirect("/login")
 
     return """
+    <h2>Register</h2>
     <form method="POST">
         Name:<br><input name="name"><br>
         Email:<br><input name="email"><br>
-        Password:<br><input type="password" name="password"><br>
-        <button>Register</button>
+        Password:<br><input type="password" name="password"><br><br>
+        <button type="submit">Register</button>
     </form>
     """
 
-@app.route("/login", methods=["GET","POST"])
+
+@app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        email = request.form["email"].lower()
-        password = request.form["password"]
+        email = request.form.get("email", "").strip().lower()
+        pwd = request.form.get("password", "")
         user = User.query.filter_by(email=email).first()
 
-        if not user or user.password != password:
+        if not user or user.password != pwd:
             return "Invalid login"
 
         session["user_id"] = user.id
         session["user_name"] = user.name
-        session["user_role"] = user.role
+        session["user_role"] = user.role  # 🔥 STORE ROLE IN SESSION
+
         return redirect("/dashboard")
 
     return """
+    <h2>Login</h2>
     <form method="POST">
         Email:<br><input name="email"><br>
-        Password:<br><input type="password" name="password"><br>
-        <button>Login</button>
+        Password:<br><input type="password" name="password"><br><br>
+        <button type="submit">Login</button>
     </form>
     """
+
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect("/")
 
-# ---------------- DASHBOARD ----------------
 
+# ---------------------------
+# DASHBOARD
+# ---------------------------
 @app.route("/dashboard")
 def dashboard():
     if "user_id" not in session:
         return redirect("/login")
 
     projects = Project.query.all()
-    project_list = "".join(
-        f"<li><a href='/project/{p.id}'>{p.name} - Week {p.current_week}/{p.weeks}</a></li>"
-        for p in projects
-    )
 
-    return f"""
-    <h2>Welcome {session.get('user_name')} ({session.get('user_role')})</h2>
+    html = f"<h2>Welcome {session.get('user_name')} ({session.get('user_role')})</h2>"
+
+    html += """
     <form method="POST" action="/create_project">
-        <input name="name" placeholder="Project name">
-        <input name="weeks" type="number" placeholder="Weeks">
-        <button>Create</button>
+        Project Name: <input name="name">
+        Weeks: <input type="number" name="weeks">
+        <button>Create Project</button>
     </form>
-    <ul>{project_list}</ul>
-    <a href='/logout'>Logout</a>
     """
+
+    html += "<h3>Projects</h3>"
+    for p in projects:
+        html += f"<div><a href='/project/{p.id}'>{p.name}</a></div>"
+
+    html += "<br><a href='/logout'>Logout</a>"
+
+    return html
+
 
 @app.route("/create_project", methods=["POST"])
 def create_project():
     if "user_id" not in session:
         return redirect("/login")
-    name = request.form["name"]
-    weeks = int(request.form["weeks"])
-    db.session.add(Project(name=name, weeks=weeks))
+
+    name = request.form.get("name", "Untitled")
+    weeks = int(request.form.get("weeks") or 1)
+
+    p = Project(name=name, weeks=weeks)
+    db.session.add(p)
     db.session.commit()
+
     return redirect("/dashboard")
 
-# ---------------- PROJECT PAGE ----------------
 
-@app.route("/project/<int:pid>", methods=["GET","POST"])
-def project_page(pid):
-    if "user_id" not in session:
-        return redirect("/login")
-
-    p = Project.query.get(pid)
-    if not p:
-        return "Not found"
-
-    if request.method == "POST":
-        f = request.files["file"]
-        desc = request.form.get("description")
-        filename = uuid4().hex + "_" + secure_filename(f.filename)
-        f.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
-
-        db.session.add(Upload(
-            project_id=pid,
-            week_number=p.current_week,
-            file_name=filename,
-            original_name=f.filename,
-            uploaded_by=session["user_name"],
-            description=desc
-        ))
-        db.session.commit()
-
-        notify_all_users(
-            f"New upload in {p.name}",
-            f"{session['user_name']} uploaded file in Week {p.current_week}"
-        )
-
-        return redirect(f"/project/{pid}")
-
-    uploads = Upload.query.filter_by(project_id=pid, week_number=p.current_week).all()
-    files = "".join(
-        f"<li>{u.original_name} - <a href='/download/{u.file_name}'>Download</a></li>"
-        for u in uploads
-    )
-
-    next_button = ""
-    finish_button = ""
-
-    if session.get("user_role") == "admin" and not p.completed:
-        if p.current_week < p.weeks:
-            next_button = f"<form method='POST' action='/project/{pid}/next'><button>Next Week</button></form>"
-        else:
-            finish_button = f"<form method='POST' action='/project/{pid}/finish'><button>Finish Project</button></form>"
-
-    return f"""
-    <h2>{p.name}</h2>
-    <p>Week {p.current_week}/{p.weeks}</p>
-    <ul>{files or "No uploads"}</ul>
-
-    <form method="POST" enctype="multipart/form-data">
-        <input type="file" name="file">
-        <textarea name="description"></textarea>
-        <button>Upload</button>
-    </form>
-
-    {next_button}
-    {finish_button}
-
-    <a href="/dashboard">Back</a>
-    """
-
-# ---------------- NEXT WEEK ----------------
-
-@app.route("/project/<int:pid>/next", methods=["POST"])
-def project_next(pid):
-    if session.get("user_role") != "admin":
-        return redirect(f"/project/{pid}")
-
-    p = Project.query.get(pid)
-    if p.current_week < p.weeks:
-        p.current_week += 1
-        db.session.commit()
-
-        notify_all_users(
-            f"{p.name} moved to Week {p.current_week}",
-            f"Admin moved project to Week {p.current_week}"
-        )
-
-    return redirect(f"/project/{pid}")
-
-# ---------------- FINISH PROJECT ----------------
-
-@app.route("/project/<int:pid>/finish", methods=["POST"])
-def project_finish(pid):
-    if session.get("user_role") != "admin":
-        return redirect(f"/project/{pid}")
-
-    p = Project.query.get(pid)
-    p.completed = True
-    p.completed_time = datetime.utcnow()
-    db.session.commit()
-
-    notify_all_users(
-        f"{p.name} Completed 🎉",
-        f"Project completed on {p.completed_time}"
-    )
-
-    return redirect(f"/project/{pid}/completed")
-
-# ---------------- COMPLETED PAGE ----------------
-
-@app.route("/project/<int:pid>/completed")
-def project_completed(pid):
-    p = Project.query.get(pid)
-    content = ""
-
-    for week in range(1, p.weeks + 1):
-        uploads = Upload.query.filter_by(project_id=pid, week_number=week).all()
-        if uploads:
-            files = "".join(
-                f"<li>{u.original_name} - <a href='/download/{u.file_name}'>Download</a></li>"
-                for u in uploads
-            )
-        else:
-            files = "No uploads"
-
-        content += f"<h3>Week {week}</h3><ul>{files}</ul>"
-
-    return f"""
-    <h1>🎉 YOUR PROJECT IS SUCCESSFULLY COMPLETED 🎉</h1>
-    <p>{p.name}</p>
-    <p>Completed on: {p.completed_time}</p>
-    {content}
-    <a href="/dashboard">Back</a>
-    """
-
-# ---------------- DOWNLOAD ----------------
-
-@app.route("/download/<path:fname>")
-def download(fname):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], fname, as_attachment=True)
-
-# ---------------- RUN ----------------
-
+# ---------------------------
+# RUN
+# ---------------------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000)
