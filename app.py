@@ -26,8 +26,8 @@ BACKGROUND_IMAGE = os.environ.get("BACKGROUND_IMAGE_PATH", "/mnt/data/1283c265-8
 # ---------------------------
 # RESEND CONFIG
 # ---------------------------
-RESEND_API_KEY = os.environ.get("re_ZQYZs7se_KpB3bkMGs1Ja1ZCTPKk1AHtt")
-SENDER_EMAIL = os.environ.get("keshavareddymuga@gmail.com", "Team Workspace <onboarding@resend.dev>")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
+SENDER_EMAIL = os.environ.get("EMAIL_FROM", "Team Workspace <onboarding@resend.dev>")
 
 db = SQLAlchemy(app)
 
