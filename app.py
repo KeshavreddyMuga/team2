@@ -426,83 +426,17 @@ def file_detail(upload_id):
 @app.route("/project/<int:pid>", methods=["GET","POST"])
 def project_page(pid):
 
-    # 1️⃣ Login check FIRST
     if "user_id" not in session:
         return redirect("/login")
 
-    # 2️⃣ Get project
     p = Project.query.get(pid)
-    if not p:
-        return STYLE + page_logout_html() + "<div class='container'>Project not found</div>"
 
-    # 3️⃣ Check membership
+    # Auto add user to project if not already member
     uid = session.get("user_id")
-
-    member = ProjectMember.query.filter_by(
-        project_id=pid,
-        user_id=uid
-    ).first()
-
-    # 4️⃣ If not member → show Add To Project
-    if not member:
-        return STYLE + page_logout_html() + f"""
-        <div class='container'>
-            <h1>{p.name}</h1>
-            <p class='small'>You are not part of this project.</p>
-
-            <form method='POST' action='/project/{pid}/join'>
-                <button class='black'>Add To Project</button>
-            </form>
-
-            <br>
-            <a href='/dashboard'><button class='black'>Back</button></a>
-        </div>
-        """
-
-    # ===============================
-    # NORMAL PROJECT LOGIC BELOW
-    # ===============================
-
-    # upload handling
-    if request.method == "POST" and 'file' in request.files:
-        f = request.files["file"]
-        if not f or f.filename == "":
-            return redirect(f"/project/{pid}")
-
-        desc = request.form.get("description","").strip()
-        original = f.filename
-        safe = uuid4().hex + "_" + secure_filename(original)
-        f.save(os.path.join(app.config["UPLOAD_FOLDER"], safe))
-
-        up = Upload(
-            project_id=pid,
-            week_number=p.current_week,
-            file_name=safe,
-            original_name=original,
-            uploaded_by=session.get("user_name"),
-            description=desc
-        )
-
-        db.session.add(up)
+    existing_member = ProjectMember.query.filter_by(project_id=pid, user_id=uid).first()
+    if not existing_member:
+        db.session.add(ProjectMember(project_id=pid, user_id=uid))
         db.session.commit()
-
-        notify_project_users(
-            pid,
-            f"New upload in {p.name}",
-            f"{session.get('user_name')} uploaded {original}"
-        )
-
-        return redirect(f"/project/{pid}")
-
-    # Rest of your original project page logic continues here...
-
-
-
-    if "user_id" not in session:
-        return redirect("/login")
-
-    p = Project.query.get(pid)
-
 
     if not p:
         return STYLE + page_logout_html() + "<div class='container'>Project not found</div>"
@@ -816,25 +750,6 @@ def test_email():
         return "Set TEST_TO env var for a quick test."
     ok = send_email(to, "Test email", "This is a test from Resend API.")
     return "OK" if ok else "FAILED"
-##
-@app.route("/project/<int:pid>/join", methods=["POST"])
-def join_project(pid):
-    if "user_id" not in session:
-        return redirect("/login")
-
-    uid = session.get("user_id")
-
-    existing = ProjectMember.query.filter_by(
-        project_id=pid,
-        user_id=uid
-    ).first()
-
-    if not existing:
-        db.session.add(ProjectMember(project_id=pid, user_id=uid))
-        db.session.commit()
-
-    return redirect(f"/project/{pid}")
-
 
 # ---------------------------
 # RUN
