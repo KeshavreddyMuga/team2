@@ -333,7 +333,13 @@ def dashboard():
     if "user_id" not in session:
         return redirect("/login")
     projects = Project.query.all()
-    project_list = "".join(f"<li><a href='/project/{p.id}'>{p.name} — Week {p.current_week}/{p.weeks}</a></li>" for p in projects)
+    project_list = "".join(
+    f"<li><a href='/project/{p.id}'>{p.name} — Week {p.current_week}/{p.weeks}"
+    f"{' — ✅ Completed' if p.completed else ''}"
+    f"</a></li>"
+    for p in projects
+)
+
     return STYLE + page_logout_html() + f"""
     <div class="container">
       <div class="header-row"><h1>Welcome {session.get('user_name')}</h1></div>
