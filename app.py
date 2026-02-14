@@ -204,8 +204,15 @@ class WeekStatus(db.Model):
     project_id = db.Column(db.Integer)
     week_number = db.Column(db.Integer)
     user_id = db.Column(db.Integer)
-    action = db.Column(db.String(20))  # 'next' or 'finish'
+    action = db.Column(db.String(20))
     clicked_time = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ProjectMember(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer)
+    user_id = db.Column(db.Integer)
+
 
 with app.app_context():
     db.create_all()
@@ -332,13 +339,29 @@ def logout():
 def dashboard():
     if "user_id" not in session:
         return redirect("/login")
+
     projects = Project.query.all()
-    project_list = "".join(
-    f"<li><a href='/project/{p.id}'>{p.name} — Week {p.current_week}/{p.weeks}"
-    f"{' — ✅ Completed' if p.completed else ''}"
-    f"</a></li>"
-    for p in projects
-)
+    project_list = ""
+
+    for p in projects:
+        members = ProjectMember.query.filter_by(project_id=p.id).all()
+        member_names = ", ".join(
+            [User.query.get(m.user_id).name for m in members if User.query.get(m.user_id)]
+        )
+        member_count = len(members)
+
+        project_list += f"""
+        <li>
+            <a href='/project/{p.id}'>
+                {p.name} 🗂 Week {p.current_week}/{p.weeks}
+                {' ✅ Completed' if p.completed else ''}
+            </a>
+            <div class='small'>
+                Members: {member_count}
+                {f" — {member_names}" if member_names else ""}
+            </div>
+        </li>
+        """
 
     return STYLE + page_logout_html() + f"""
     <div class="container">
@@ -352,6 +375,7 @@ def dashboard():
       <ul>{project_list}</ul>
     </div>
     """
+
 
 @app.route("/create_project", methods=["POST"])
 def create_project():
@@ -401,11 +425,22 @@ def file_detail(upload_id):
 # ---------------------------
 @app.route("/project/<int:pid>", methods=["GET","POST"])
 def project_page(pid):
+
     if "user_id" not in session:
         return redirect("/login")
+
     p = Project.query.get(pid)
+
+    # Auto add user to project if not already member
+    uid = session.get("user_id")
+    existing_member = ProjectMember.query.filter_by(project_id=pid, user_id=uid).first()
+    if not existing_member:
+        db.session.add(ProjectMember(project_id=pid, user_id=uid))
+        db.session.commit()
+
     if not p:
         return STYLE + page_logout_html() + "<div class='container'>Project not found</div>"
+
 
     # upload handling
     if request.method == "POST" and 'file' in request.files:
@@ -443,7 +478,7 @@ def project_page(pid):
         file_list += f"<div class='file-box'><b>{u.original_name}</b> — {u.uploaded_by} — <a class='link' href='/download/{u.file_name}'>Download</a></div>"
 
     uid = session.get("user_id")
-    total_users = User.query.count() or 1
+    total_users = ProjectMember.query.filter_by(project_id=pid).count() or 1
     next_count = WeekStatus.query.filter_by(project_id=pid, week_number=p.current_week, action='next').count()
     finish_count = WeekStatus.query.filter_by(project_id=pid, week_number=p.current_week, action='finish').count()
     next_clicked = WeekStatus.query.filter_by(project_id=pid, week_number=p.current_week, user_id=uid, action='next').first()
@@ -575,6 +610,13 @@ def project_completed(pid):
 
     completed_at = p.completed_time.strftime("%Y-%m-%d %H:%M:%S") if p.completed_time else "N/A"
 
+    # Get project members
+    members = ProjectMember.query.filter_by(project_id=pid).all()
+    member_names = ", ".join(
+        [User.query.get(m.user_id).name for m in members if User.query.get(m.user_id)]
+    )
+    member_count = len(members)
+
     content = ""
     for week in range(1, p.weeks + 1):
 
@@ -620,6 +662,12 @@ def project_completed(pid):
         <p class='small' style='margin-top:10px;'>
             Project Name: <b>{p.name}</b>
         </p>
+
+        <p class='small'>
+            Members: {member_count}
+            {f" — {member_names}" if member_names else ""}
+        </p>
+
         <p class='small'>Completed on: {completed_at}</p>
 
         <hr style='margin:20px 0;'>
@@ -631,6 +679,7 @@ def project_completed(pid):
         </div>
     </div>
     """
+
 
 
 # ---------------------------
