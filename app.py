@@ -555,6 +555,9 @@ def project_finish(pid):
 # ---------------------------
 # COMPLETED PAGE (NEW INTERFACE + WEEK DETAILS)
 # ---------------------------
+# ---------------------------
+# COMPLETED PAGE (FINAL CLEAN VERSION)
+# ---------------------------
 @app.route("/project/<int:pid>/completed")
 def project_completed(pid):
     if "user_id" not in session:
@@ -570,18 +573,6 @@ def project_completed(pid):
     for week in range(1, p.weeks + 1):
 
         uploads = Upload.query.filter_by(project_id=pid, week_number=week).all()
-        next_users = WeekStatus.query.filter_by(project_id=pid, week_number=week, action='next').all()
-        finish_users = WeekStatus.query.filter_by(project_id=pid, week_number=week, action='finish').all()
-
-        next_names = ", ".join([User.query.get(ws.user_id).name for ws in next_users if User.query.get(ws.user_id)])
-        finish_names = ", ".join([User.query.get(ws.user_id).name for ws in finish_users if User.query.get(ws.user_id)])
-
-        all_names = [u.name for u in User.query.all()]
-        clicked_names = set()
-        clicked_names.update([n.strip() for n in next_names.split(",") if n.strip()])
-        clicked_names.update([n.strip() for n in finish_names.split(",") if n.strip()])
-        pending_list = [n for n in all_names if n not in clicked_names]
-        pending = ", ".join(pending_list)
 
         file_cards = ""
         if uploads:
@@ -609,9 +600,6 @@ def project_completed(pid):
         <h3 style='margin-top:20px'>Week {week}</h3>
         <div class='card'>
           {file_cards}
-          <div style='margin-top:8px'><b>Next clicked:</b> {next_names or '—'}</div>
-          <div style='margin-top:4px'><b>Finish clicked:</b> {finish_names or '—'}</div>
-          <div style='margin-top:4px'><b>Pending:</b> {pending or '—'}</div>
         </div>
         """
 
