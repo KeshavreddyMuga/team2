@@ -552,26 +552,92 @@ def project_finish(pid):
 # ---------------------------
 # COMPLETED PAGE (NEW INTERFACE)
 # ---------------------------
+# ---------------------------
+# COMPLETED PAGE (NEW INTERFACE + WEEK DETAILS)
+# ---------------------------
 @app.route("/project/<int:pid>/completed")
 def project_completed(pid):
     if "user_id" not in session:
         return redirect("/login")
+
     p = Project.query.get(pid)
     if not p:
         return STYLE + page_logout_html() + "<div class='container'>Project not found</div>"
 
-    # Format completed time nicely
     completed_at = p.completed_time.strftime("%Y-%m-%d %H:%M:%S") if p.completed_time else "N/A"
+
+    content = ""
+    for week in range(1, p.weeks + 1):
+
+        uploads = Upload.query.filter_by(project_id=pid, week_number=week).all()
+        next_users = WeekStatus.query.filter_by(project_id=pid, week_number=week, action='next').all()
+        finish_users = WeekStatus.query.filter_by(project_id=pid, week_number=week, action='finish').all()
+
+        next_names = ", ".join([User.query.get(ws.user_id).name for ws in next_users if User.query.get(ws.user_id)])
+        finish_names = ", ".join([User.query.get(ws.user_id).name for ws in finish_users if User.query.get(ws.user_id)])
+
+        all_names = [u.name for u in User.query.all()]
+        clicked_names = set()
+        clicked_names.update([n.strip() for n in next_names.split(",") if n.strip()])
+        clicked_names.update([n.strip() for n in finish_names.split(",") if n.strip()])
+        pending_list = [n for n in all_names if n not in clicked_names]
+        pending = ", ".join(pending_list)
+
+        file_cards = ""
+        if uploads:
+            for u in uploads:
+                file_cards += f"""
+                <div class='card'>
+                  <b>{u.original_name}</b>
+                  <div class='meta'>
+                    Uploaded by: {u.uploaded_by} —
+                    {u.uploaded_time.strftime('%Y-%m-%d %H:%M:%S')}
+                  </div>
+                  <div style='margin-top:8px'>
+                    {u.description or 'No description'}
+                  </div>
+                  <div style='margin-top:8px'>
+                    <a class='link' href='/file/{u.id}'>View Details</a> —
+                    <a class='link' href='/download/{u.file_name}'>Download</a>
+                  </div>
+                </div>
+                """
+        else:
+            file_cards = "<p class='small'>No uploads for this week.</p>"
+
+        content += f"""
+        <h3 style='margin-top:20px'>Week {week}</h3>
+        <div class='card'>
+          {file_cards}
+          <div style='margin-top:8px'><b>Next clicked:</b> {next_names or '—'}</div>
+          <div style='margin-top:4px'><b>Finish clicked:</b> {finish_names or '—'}</div>
+          <div style='margin-top:4px'><b>Pending:</b> {pending or '—'}</div>
+        </div>
+        """
+
     return STYLE + page_logout_html() + f"""
-    <div class='container' style='text-align:center; padding:40px;'>
-        <h1 style='font-size:32px; font-weight:800; color:#000;'>🎉 TEAMMATES SUCCESSFULLY COMPLETED THE PROJECT 🎉</h1>
-        <p class='small' style='margin-top:10px;'>Project Name: <b>{p.name}</b></p>
+    <div class='container'>
+        <div class='header-row'>
+            <h1 style='font-size:32px; font-weight:800; color:#000;'>
+                🎉 TEAMMATES SUCCESSFULLY COMPLETED THE PROJECT 🎉
+            </h1>
+        </div>
+
+        <p class='small' style='margin-top:10px;'>
+            Project Name: <b>{p.name}</b>
+        </p>
         <p class='small'>Completed on: {completed_at}</p>
-        <div style='margin-top:18px;'>
-          <a href='/dashboard'><button class='black'>Back to Dashboard</button></a>
+
+        <hr style='margin:20px 0;'>
+
+        {content}
+
+        <div style='margin-top:20px; text-align:center;'>
+            <a href='/dashboard'><button class='black'>Back to Dashboard</button></a>
         </div>
     </div>
     """
+
 
 # ---------------------------
 # WEEK DETAILS (1..current_week)
