@@ -1,7 +1,8 @@
 # app.py
 import os
 import traceback
-import requests
+import smtplib
+from email.mime.text import MIMEText
 from datetime import datetime
 from uuid import uuid4
 from flask import Flask, request, redirect, session, send_from_directory, url_for
@@ -26,10 +27,12 @@ BACKGROUND_IMAGE = os.environ.get("BACKGROUND_IMAGE_PATH", "/mnt/data/1283c265-8
 # ---------------------------
 # RESEND CONFIG
 # ---------------------------
-RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
-SENDER_EMAIL = os.environ.get("EMAIL_FROM", "Team Workspace <onboarding@resend.dev>")
 
 db = SQLAlchemy(app)
+
+GMAIL_USER = os.environ.get("GMAIL_USER")
+GMAIL_PASS = os.environ.get("GMAIL_PASS")
+
 
 # ---------------------------
 # STYLES (Updated for consistent inputs & buttons)
@@ -218,31 +221,48 @@ with app.app_context():
     db.create_all()
 
 # ---------------------------
-# EMAIL (Resend)
+# EMAIL 
+# ---------------------------
+# EMAIL (GMAIL SMTP)
 # ---------------------------
 def send_email(to, subject, body):
-    if not RESEND_API_KEY:
-        app.logger.error("Missing RESEND_API_KEY env var")
+    if not GMAIL_USER or not GMAIL_PASS:
+        print("Missing Gmail credentials")
         return False
+
     try:
-        url = "https://api.resend.com/emails"
-        payload = {"from": SENDER_EMAIL, "to": to, "subject": subject, "text": body}
-        headers = {"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"}
-        r = requests.post(url, json=payload, headers=headers, timeout=10)
-        app.logger.info("Resend response: %s %s", r.status_code, r.text)
-        return r.status_code in (200, 201)
-    except Exception:
-        app.logger.exception("send_email failed")
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = f"Team Workspace <{GMAIL_USER}>"
+        msg["To"] = to
+
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(GMAIL_USER, GMAIL_PASS)
+        server.sendmail(GMAIL_USER, to, msg.as_string())
+        server.quit()
+
+        print("Email sent to:", to)
+        return True
+
+    except Exception as e:
+        print("EMAIL ERROR:", e)
         return False
+
 
 def notify_all_users(subject, body):
     for u in User.query.all():
         if u.email:
             send_email(u.email, subject, body)
 
+
 def notify_project_users(project_id, subject, body):
-    # For now notifying all users (you can restrict to project members later)
-    notify_all_users(subject, body)
+    members = ProjectMember.query.filter_by(project_id=project_id).all()
+    for m in members:
+        user = User.query.get(m.user_id)
+        if user and user.email:
+            send_email(user.email, subject, body)
+
 
 # ---------------------------
 # HELPERS
@@ -748,7 +768,7 @@ def test_email():
     to = os.environ.get("TEST_TO", "")
     if not to:
         return "Set TEST_TO env var for a quick test."
-    ok = send_email(to, "Test email", "This is a test from Resend API.")
+    ok = ok = send_email(to, "Test email", "This is a test from Gmail SMTP.")
     return "OK" if ok else "FAILED"
 
 # ---------------------------
