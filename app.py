@@ -1,8 +1,7 @@
 # app.py
 import os
 import traceback
-import smtplib
-from email.mime.text import MIMEText
+import requests
 from datetime import datetime
 from uuid import uuid4
 from flask import Flask, request, redirect, session, send_from_directory, url_for
@@ -27,12 +26,10 @@ BACKGROUND_IMAGE = os.environ.get("BACKGROUND_IMAGE_PATH", "/mnt/data/1283c265-8
 # ---------------------------
 # RESEND CONFIG
 # ---------------------------
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
+SENDER_EMAIL = "onboarding@resend.dev"
 
 db = SQLAlchemy(app)
-
-GMAIL_USER = os.environ.get("GMAIL_USER")
-GMAIL_PASS = os.environ.get("GMAIL_PASS")
-
 
 # ---------------------------
 # STYLES (Updated for consistent inputs & buttons)
@@ -221,48 +218,31 @@ with app.app_context():
     db.create_all()
 
 # ---------------------------
-# EMAIL 
-# ---------------------------
-# EMAIL (GMAIL SMTP)
+# EMAIL (Resend)
 # ---------------------------
 def send_email(to, subject, body):
-    if not GMAIL_USER or not GMAIL_PASS:
-        print("Missing Gmail credentials")
+    if not RESEND_API_KEY:
+        app.logger.error("Missing RESEND_API_KEY env var")
         return False
-
     try:
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"] = f"Team Workspace <{GMAIL_USER}>"
-        msg["To"] = to
-
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(GMAIL_USER, GMAIL_PASS)
-        server.sendmail(GMAIL_USER, to, msg.as_string())
-        server.quit()
-
-        print("Email sent to:", to)
-        return True
-
-    except Exception as e:
-        print("EMAIL ERROR:", e)
+        url = "https://api.resend.com/emails"
+        payload = {"from": SENDER_EMAIL, "to": to, "subject": subject, "text": body}
+        headers = {"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"}
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
+        app.logger.info("Resend response: %s %s", r.status_code, r.text)
+        return r.status_code in (200, 201)
+    except Exception:
+        app.logger.exception("send_email failed")
         return False
-
 
 def notify_all_users(subject, body):
     for u in User.query.all():
         if u.email:
             send_email(u.email, subject, body)
 
-
 def notify_project_users(project_id, subject, body):
-    members = ProjectMember.query.filter_by(project_id=project_id).all()
-    for m in members:
-        user = User.query.get(m.user_id)
-        if user and user.email:
-            send_email(user.email, subject, body)
-
+    # For now notifying all users (you can restrict to project members later)
+    notify_all_users(subject, body)
 
 # ---------------------------
 # HELPERS
@@ -446,17 +426,83 @@ def file_detail(upload_id):
 @app.route("/project/<int:pid>", methods=["GET","POST"])
 def project_page(pid):
 
+    # 1️⃣ Login check FIRST
+    if "user_id" not in session:
+        return redirect("/login")
+
+    # 2️⃣ Get project
+    p = Project.query.get(pid)
+    if not p:
+        return STYLE + page_logout_html() + "<div class='container'>Project not found</div>"
+
+    # 3️⃣ Check membership
+    uid = session.get("user_id")
+
+    member = ProjectMember.query.filter_by(
+        project_id=pid,
+        user_id=uid
+    ).first()
+
+    # 4️⃣ If not member → show Add To Project
+    if not member:
+        return STYLE + page_logout_html() + f"""
+        <div class='container'>
+            <h1>{p.name}</h1>
+            <p class='small'>You are not part of this project.</p>
+
+            <form method='POST' action='/project/{pid}/join'>
+                <button class='black'>Add To Project</button>
+            </form>
+
+            <br>
+            <a href='/dashboard'><button class='black'>Back</button></a>
+        </div>
+        """
+
+    # ===============================
+    # NORMAL PROJECT LOGIC BELOW
+    # ===============================
+
+    # upload handling
+    if request.method == "POST" and 'file' in request.files:
+        f = request.files["file"]
+        if not f or f.filename == "":
+            return redirect(f"/project/{pid}")
+
+        desc = request.form.get("description","").strip()
+        original = f.filename
+        safe = uuid4().hex + "_" + secure_filename(original)
+        f.save(os.path.join(app.config["UPLOAD_FOLDER"], safe))
+
+        up = Upload(
+            project_id=pid,
+            week_number=p.current_week,
+            file_name=safe,
+            original_name=original,
+            uploaded_by=session.get("user_name"),
+            description=desc
+        )
+
+        db.session.add(up)
+        db.session.commit()
+
+        notify_project_users(
+            pid,
+            f"New upload in {p.name}",
+            f"{session.get('user_name')} uploaded {original}"
+        )
+
+        return redirect(f"/project/{pid}")
+
+    # Rest of your original project page logic continues here...
+
+
+
     if "user_id" not in session:
         return redirect("/login")
 
     p = Project.query.get(pid)
 
-    # Auto add user to project if not already member
-    uid = session.get("user_id")
-    existing_member = ProjectMember.query.filter_by(project_id=pid, user_id=uid).first()
-    if not existing_member:
-        db.session.add(ProjectMember(project_id=pid, user_id=uid))
-        db.session.commit()
 
     if not p:
         return STYLE + page_logout_html() + "<div class='container'>Project not found</div>"
@@ -768,8 +814,27 @@ def test_email():
     to = os.environ.get("TEST_TO", "")
     if not to:
         return "Set TEST_TO env var for a quick test."
-    ok = ok = send_email(to, "Test email", "This is a test from Gmail SMTP.")
+    ok = send_email(to, "Test email", "This is a test from Resend API.")
     return "OK" if ok else "FAILED"
+##
+@app.route("/project/<int:pid>/join", methods=["POST"])
+def join_project(pid):
+    if "user_id" not in session:
+        return redirect("/login")
+
+    uid = session.get("user_id")
+
+    existing = ProjectMember.query.filter_by(
+        project_id=pid,
+        user_id=uid
+    ).first()
+
+    if not existing:
+        db.session.add(ProjectMember(project_id=pid, user_id=uid))
+        db.session.commit()
+
+    return redirect(f"/project/{pid}")
+
 
 # ---------------------------
 # RUN
