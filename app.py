@@ -863,12 +863,7 @@ Project Name: {project.name}
 # RUN
 # ---------------------------
 if __name__ == "__main__":
-    # If you want to serve the uploaded background image via Flask, you can add a static route.
-    # For simple local testing you can uncomment below to serve the background image from /image path:
-    #
-    # @app.route('/image')
-    # def serve_image():
-    #     return send_from_directory(os.path.dirname(BACKGROUND_IMAGE), os.path.basename(BACKGROUND_IMAGE))
-    #
-    # Then set BACKGROUND_IMAGE to url_for('serve_image', _external=False) or reference /image in your CSS.
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000))
+    )
