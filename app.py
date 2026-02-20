@@ -797,15 +797,64 @@ def join_project(pid):
         return redirect("/login")
 
     uid = session.get("user_id")
+    user = User.query.get(uid)
+    project = Project.query.get(pid)
 
+    if not project:
+        return redirect("/dashboard")
+
+    # Check if already member
     existing = ProjectMember.query.filter_by(
         project_id=pid,
         user_id=uid
     ).first()
 
     if not existing:
+
+        # 🔹 Get old members BEFORE adding new user
+        old_members = ProjectMember.query.filter_by(project_id=pid).all()
+
+        # 🔹 Add new user
         db.session.add(ProjectMember(project_id=pid, user_id=uid))
         db.session.commit()
+
+        # ✅ 1️⃣ Email to NEW USER
+        if user and user.email:
+            send_email(
+                user.email,
+                f"You are added to the project {project.name}",
+                f"""
+Hello {user.name},
+
+You are successfully added to the project:
+
+Project Name: {project.name}
+Total Weeks: {project.weeks}
+
+You can now upload files and participate.
+
+— Team Workspace
+                """
+            )
+
+        # ✅ 2️⃣ Email to EXISTING MEMBERS
+        for member in old_members:
+            member_user = User.query.get(member.user_id)
+
+            if member_user and member_user.email:
+                send_email(
+                    member_user.email,
+                    f"{user.name} is added to the project",
+                    f"""
+Hello {member_user.name},
+
+{user.name} is added to your project:
+
+Project Name: {project.name}
+
+— Team Workspace
+                    """
+                )
 
     return redirect(f"/project/{pid}")
 
