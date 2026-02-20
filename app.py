@@ -222,17 +222,33 @@ with app.app_context():
 # ---------------------------
 def send_email(to, subject, body):
     if not RESEND_API_KEY:
-        app.logger.error("Missing RESEND_API_KEY env var")
+        print("Missing RESEND_API_KEY")
         return False
+
     try:
         url = "https://api.resend.com/emails"
-        payload = {"from": SENDER_EMAIL, "to": to, "subject": subject, "text": body}
-        headers = {"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"}
-        r = requests.post(url, json=payload, headers=headers, timeout=10)
-        app.logger.info("Resend response: %s %s", r.status_code, r.text)
-        return r.status_code in (200, 201)
-    except Exception:
-        app.logger.exception("send_email failed")
+
+        payload = {
+            "from": SENDER_EMAIL,
+            "to": [to],
+            "subject": subject,
+            "text": body
+        }
+
+        headers = {
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(url, json=payload, headers=headers)
+
+        print("Status:", response.status_code)
+        print("Response:", response.text)
+
+        return response.status_code in (200, 201)
+
+    except Exception as e:
+        print("Email error:", e)
         return False
 
 def notify_all_users(subject, body):
@@ -494,49 +510,7 @@ def project_page(pid):
 
         return redirect(f"/project/{pid}")
 
-    # Rest of your original project page logic continues here...
-
-
-
-    if "user_id" not in session:
-        return redirect("/login")
-
-    p = Project.query.get(pid)
-
-
-    if not p:
-        return STYLE + page_logout_html() + "<div class='container'>Project not found</div>"
-
-
-    # upload handling
-    if request.method == "POST" and 'file' in request.files:
-        f = request.files["file"]
-        if not f or f.filename == "":
-            return redirect(f"/project/{pid}")
-        desc = request.form.get("description","").strip()
-        original = f.filename
-        safe = uuid4().hex + "_" + secure_filename(original)
-        f.save(os.path.join(app.config["UPLOAD_FOLDER"], safe))
-        up = Upload(project_id=pid, week_number=p.current_week, file_name=safe, original_name=original, uploaded_by=session.get("user_name"), description=desc)
-        db.session.add(up)
-        db.session.commit()
-
-        # Build absolute links for email
-        download_link = url_for('download', fname=safe, _external=True)
-        detail_link = url_for('file_detail', upload_id=up.id, _external=True)
-
-        # Email body containing description + download link + details link
-        email_body = (
-            f"New file uploaded in project: {p.name}\n\n"
-            f"Uploaded by: {session.get('user_name')}\n"
-            f"Week: {p.current_week}\n"
-            f"File: {original}\n"
-            f"Description: {desc or 'No description provided'}\n\n"
-            f"Download link: {download_link}\n"
-            f"View details: {detail_link}\n"
-        )
-        notify_project_users(pid, f"New upload in {p.name}", email_body)
-        return redirect(f"/project/{pid}")
+    # 
 
     uploads = Upload.query.filter_by(project_id=pid, week_number=p.current_week).all()
     file_list = ""
@@ -619,7 +593,7 @@ def project_next(pid):
         db.session.add(WeekStatus(project_id=pid, week_number=p.current_week, user_id=uid, action='next'))
         db.session.commit()
         notify_project_users(pid, f"{session.get('user_name')} clicked Next", f"{session.get('user_name')} clicked Next for {p.name} (Week {p.current_week}).")
-    total = User.query.count() or 1
+    total = ProjectMember.query.filter_by(project_id=pid).count() or 1
     done = WeekStatus.query.filter_by(project_id=pid, week_number=p.current_week, action='next').count()
     if done >= total and p.current_week < p.weeks:
         p.current_week += 1
@@ -640,7 +614,7 @@ def project_finish(pid):
         db.session.add(WeekStatus(project_id=pid, week_number=p.current_week, user_id=uid, action='finish'))
         db.session.commit()
         notify_project_users(pid, f"{session.get('user_name')} clicked Finish", f"{session.get('user_name')} clicked Finish for {p.name} (Week {p.current_week}).")
-    total = User.query.count() or 1
+    total = ProjectMember.query.filter_by(project_id=pid).count() or 1
     done = WeekStatus.query.filter_by(project_id=pid, week_number=p.current_week, action='finish').count()
     if done >= total:
         p.completed = True
